@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI OCR — Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/theme.css">
+<style>
+  /* Page-local: centered login + role reveal */
+  .loginwrap { min-height: calc(100vh - 60px); display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .loginwrap.hidden { display: none; }
+  .loginwrap .card { max-width: 460px; width: 100%; box-shadow: var(--glow-lg); }
+  .login-brand { text-align: center; margin-bottom: 20px; }
+  .login-brand h1 { font-size: 1.7rem; font-weight: 800; }
+  .login-brand h1 span { color: var(--accent); text-shadow: 0 0 22px hsl(356 88% 58% / .55); }
+  .login-brand .tagline { font-family: var(--font-mono); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.3em; color: var(--muted); margin-top: 8px; }
+  nav .who { display: none; align-items: center; gap: 10px; }
+  nav .who .name { font-size: 0.82rem; color: var(--muted); }
+  .rolepill.admin { background: hsl(var(--primary-h)/.15); color: var(--accent); border: 1px solid hsl(var(--primary-h)/.4); }
+  .rolepill.client { background: hsl(var(--secondary-h)/.15); color: var(--secondary); border: 1px solid hsl(var(--secondary-h)/.4); }
+  .rolepill { padding: 2px 10px; border-radius: 99px; font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: .06em; }
+  /* Client dashboard tabs */
+  .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); }
+  .tabs .tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--font-mono); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 10px 16px; cursor: pointer; transition: color .15s, border-color .15s; }
+  .tabs .tab:hover { color: var(--text); }
+  .tabs .tab.on { color: var(--text); border-bottom-color: var(--accent); }
+  .tabpane { display: grid; gap: 20px; }
+  .tabpane.hidden { display: none; }
+</style>
+</head>
+<body>
+  <nav>
+    <div class="brand"><span>AI OCR</span> · Portal</div>
+    <div class="links">
+      <span class="who" id="userBox">
+        <span class="name" id="userName"></span>
+        <span class="rolepill" id="rolePill"></span>
+      </span>
+      <a href="/docs">API Docs</a>
+      <a href="#" id="navSignout" class="hidden">Sign out</a>
+    </div>
+  </nav>
+
+  <!-- ===== Login / Signup (single entry) ===== -->
+  <div class="loginwrap" id="loginView">
+    <div class="card">
+      <div class="login-brand">
+        <h1><span>AI</span> OCR</h1>
+        <div class="tagline">document intelligence portal</div>
+      </div>
+      <div style="display:flex; gap:8px; margin-bottom:18px;">
+        <button class="btn btn-ghost" id="tabLogin" style="flex:1;">Sign in</button>
+        <button class="btn btn-ghost" id="tabSignup" style="flex:1;">Create account</button>
+      </div>
+
+      <div id="signupFields" class="hidden">
+        <label>Name</label>
+        <input type="text" id="nameInput" placeholder="Your name / company" autocomplete="organization">
+        <div style="height:12px"></div>
+      </div>
+      <label>Email</label>
+      <input type="text" id="emailInput" placeholder="you@example.com" autocomplete="username">
+      <div style="height:12px"></div>
+      <label>Password</label>
+      <input type="password" id="pwInput" placeholder="••••••••" autocomplete="current-password">
+      <div style="margin-top: 16px; display:flex; gap:10px;">
+        <button class="btn" id="submitBtn" style="flex:1;">Sign in</button>
+      </div>
+      <p class="muted" id="loginMsg" style="margin-top:12px;">Admins and clients sign in here — you'll see the right dashboard for your role.</p>
+    </div>
+  </div>
+
+  <!-- ===== Client dashboard ===== -->
+  <div class="wrap hidden" id="clientView">
+    <div class="keybox hidden" id="clientKeyBox"></div>
+
+    <div class="tabs" id="clientTabs">
+      <button class="tab on" data-tab="dash">Dashboard</button>
+      <button class="tab" data-tab="ocr">OCR</button>
+      <button class="tab" data-tab="account">Account</button>
+    </div>
+
+    <!-- Dashboard: usage stats + OCR history -->
+    <div class="tabpane" id="paneDash">
+      <div class="card">
+        <h2>Usage</h2>
+        <div class="stats">
+          <div class="stat"><div class="n" id="uTotal">0</div><div class="l">Total requests</div></div>
+          <div class="stat"><div class="n" id="uToday">0</div><div class="l">Today</div></div>
+          <div class="stat"><div class="n" id="uMonth">0</div><div class="l">This month</div></div>
+          <div class="stat"><div class="n" id="uDays">0</div><div class="l">Days active</div></div>
+        </div>
+        <div id="quotaBox" class="hidden">
+          <div class="quota-line"><span class="muted" id="quotaText"></span><span class="muted" id="quotaRem"></span></div>
+          <div class="progress" id="quotaProg"><i id="quotaBar" style="width:0%"></i></div>
+        </div>
+        <div class="over-banner" id="overBanner"></div>
+        <div style="margin-top:20px;"><div class="muted">Last 30 days</div><div class="chart" id="chart"></div></div>
+      </div>
+
+      <div class="card">
+        <h2>OCR history</h2>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>When</th><th>File</th><th>Type</th><th>Lang</th><th>Blocks</th><th>Pages · Chars</th><th>Options</th></tr></thead>
+            <tbody id="histRows"></tbody>
+          </table>
+        </div>
+        <p class="muted" style="margin-top:10px;">Your most recent document runs — each entry records the file, detected type, language and how much text was extracted.</p>
+      </div>
+    </div>
+
+    <!-- OCR feature -->
+    <div class="tabpane hidden" id="paneOcr">
+      <div class="row">
+        <div class="card">
+          <h2>Run OCR</h2>
+          <div class="filedrop" id="drop">
+            <input type="file" id="file" accept="image/*,.pdf,.docx,.xlsx">
+            <span id="fileLabel">Drop a file or click to browse · PNG, JPG, PDF, DOCX, XLSX</span>
+          </div>
+          <div class="flex" style="margin-top:14px;">
+            <div style="flex:1; min-width:120px;"><label>Language</label><select id="lang"></select></div>
+            <button class="btn" id="runBtn">Process</button>
+          </div>
+          <div class="toggles">
+            <label class="chk"><input type="checkbox" id="optTable"> Table detection</label>
+            <label class="chk"><input type="checkbox" id="optParse"> LLM document parsing</label>
+          </div>
+          <div id="fieldsWrap" style="display:none; margin-top:12px;">
+            <label>Form fields to extract (optional, comma-separated)</label>
+            <input type="text" id="optFields" placeholder="e.g. invoice_number, vendor, invoice_date, total, due_date">
+            <p class="muted" style="margin-top:6px;">Leave blank for a generic field set. List your form's exact fields to get them back as matching keys.</p>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Result</h2>
+          <div class="muted" id="resMeta">No result yet.</div>
+          <div class="res-sec" id="resDoc" style="display:none;"></div>
+          <div class="res-sec" id="resTables" style="display:none;"></div>
+          <div class="res-sec" id="resTextSec" style="display:none;">
+            <h3>Extracted text</h3>
+            <div class="out" id="resOut"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Account information -->
+    <div class="tabpane hidden" id="paneAccount">
+      <div class="card">
+        <h2>Account</h2>
+        <div class="kv"><span class="k">Client name</span><span id="cName">—</span></div>
+        <div class="kv"><span class="k">API key</span><span id="cPrefix">—</span></div>
+        <div class="kv"><span class="k">Plan</span><span id="cPlan">—</span></div>
+        <div class="kv"><span class="k">Status</span><span id="cStatus">—</span></div>
+        <div class="kv"><span class="k">Rate limit</span><span id="cRpm">—</span></div>
+        <div class="kv"><span class="k">Over-quota</span><span id="cMode">—</span></div>
+        <div class="kv"><span class="k">Member since</span><span id="cCreated">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Admin dashboard ===== -->
+  <div class="wrap hidden" id="adminView">
+    <div class="card">
+      <h2>Fleet overview</h2>
+      <div class="stats">
+        <div class="stat"><div class="n" id="sTotal">0</div><div class="l">Total clients</div></div>
+        <div class="stat"><div class="n" id="sActive">0</div><div class="l">Active clients</div></div>
+        <div class="stat"><div class="n" id="sReq">0</div><div class="l">Total requests</div></div>
+        <div class="stat"><div class="n" id="sToday">0</div><div class="l">Requests today</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Issue a new client key</h2>
+      <div class="flex">
+        <div style="flex:2; min-width:220px;"><label>Client name</label><input type="text" id="newName" placeholder="e.g. Acme Corp"></div>
+        <div style="flex:1; min-width:120px;"><label>Plan</label><input type="text" id="newPlan" placeholder="free / pro"></div>
+        <div style="flex:1; min-width:150px;"><label>Monthly requests</label><input type="number" id="newQuota" min="1" placeholder="blank = ∞"></div>
+        <div style="flex:1; min-width:150px;"><label>Per-minute limit</label><input type="number" id="newRpm" min="1" placeholder="blank = ∞"></div>
+        <div style="flex:1; min-width:150px;"><label>Over quota</label>
+          <select id="newMode">
+            <option value="hard">Hard — block (429)</option>
+            <option value="soft">Soft — serve + flag</option>
+          </select>
+        </div>
+        <button class="btn" id="createBtn">Create client</button>
+      </div>
+      <p class="muted" style="margin-top:10px;">Limits left blank fall back to server defaults (<code>OCR_DEFAULT_*</code>). <strong>Soft</strong> over-quota keeps serving past the cap (flagged <code>X-Over-Quota</code>); <strong>Hard</strong> rejects with 429.</p>
+      <div class="keybox hidden" id="adminKeyBox"></div>
+    </div>
+
+    <div class="card">
+      <h2>Clients</h2>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>ID</th><th>Name / Plan</th><th>Key</th><th>Status</th><th>This month</th><th>Total</th><th>Last used</th><th>30-day trend</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:12px;">Revoking deactivates a key immediately and cannot be undone. Use "Limits" to change plan, quota, rate limit, or over-quota mode. Highlighted rows are over quota (soft-cap, still served).</p>
+    </div>
+
+    <div class="card">
+      <h2>Admin accounts</h2>
+      <div class="flex">
+        <div style="flex:1; min-width:160px;"><label>Name</label><input type="text" id="admName" placeholder="Full name"></div>
+        <div style="flex:1; min-width:180px;"><label>Email</label><input type="text" id="admEmail" placeholder="admin@example.com"></div>
+        <div style="flex:1; min-width:160px;"><label>Password</label><input type="password" id="admPw" placeholder="min 8 chars"></div>
+        <button class="btn" id="addAdminBtn" style="background:var(--success); color:#04120b;">Add admin</button>
+      </div>
+      <div style="overflow-x:auto; margin-top:14px;">
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Last login</th><th>Status</th><th></th></tr></thead>
+          <tbody id="adminRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+const API = window.location.origin;
+const LANGS = ['en','ch','chinese_cht','japan','korean','fr','de','es','pt','ru','ar','hi','it','pl','nl','tr','vi','th','ms','id','tl','sw'];
+let MODE = 'login';      // 'login' | 'signup'
+let ROLE = null;         // 'admin' | 'client'
+let CURRENT = null;      // AuthUser
+const H = () => ({ 'Content-Type': 'application/json' });
+async function apiFetch(url, opts={}) { return fetch(url, { credentials: 'same-origin', ...opts }); }
+function esc(s){ const d=document.createElement('div'); d.textContent=s==null?'':String(s); return d.innerHTML; }
+
+document.getElementById('lang').innerHTML = LANGS.map(l => `<option value="${l}">${l}</option>`).join('');
+const fileInput = document.getElementById('file');
+fileInput.addEventListener('change', () => {
+  document.getElementById('fileLabel').textContent = fileInput.files[0] ? fileInput.files[0].name : 'Drop a file or click to browse · PNG, JPG, PDF, DOCX, XLSX';
+});
+
+// ------------------------------------------------------------- View switch
+function showLogin() {
+  document.getElementById('loginView').classList.remove('hidden');
+  document.getElementById('clientView').classList.add('hidden');
+  document.getElementById('adminView').classList.add('hidden');
+  document.getElementById('userBox').style.display = 'none';
+  document.getElementById('navSignout').classList.add('hidden');
+}
+
+function enterRole(type) {
+  ROLE = type;
+  document.getElementById('loginView').classList.add('hidden');
+  document.getElementById('clientView').classList.toggle('hidden', type !== 'client');
+  document.getElementById('adminView').classList.toggle('hidden', type !== 'admin');
+  document.getElementById('userName').textContent = CURRENT ? CURRENT.name : '';
+  const rp = document.getElementById('rolePill');
+  rp.textContent = type; rp.className = 'rolepill ' + type;
+  document.getElementById('userBox').style.display = 'inline-flex';
+  document.getElementById('navSignout').classList.remove('hidden');
+  if (type === 'admin') { loadAll(); }
+  else { loadDashboard(); }
+}
+
+function setLoginMsg(msg, isErr){
+  const el = document.getElementById('loginMsg');
+  el.textContent = msg;
+  el.style.color = isErr ? 'var(--danger)' : 'var(--muted)';
+}
+
+function setMode(m){
+  MODE = m;
+  document.getElementById('signupFields').classList.toggle('hidden', m !== 'signup');
+  document.getElementById('submitBtn').textContent = m === 'signup' ? 'Create account' : 'Sign in';
+  document.getElementById('tabLogin').style.color = m === 'login' ? 'var(--text)' : 'var(--muted)';
+  document.getElementById('tabLogin').style.borderColor = m === 'login' ? 'var(--accent)' : 'var(--border)';
+  document.getElementById('tabSignup').style.color = m === 'signup' ? 'var(--text)' : 'var(--muted)';
+  document.getElementById('tabSignup').style.borderColor = m === 'signup' ? 'var(--accent)' : 'var(--border)';
+}
+
+// ------------------------------------------------------------------- Auth
+async function tryAuth() {
+  try {
+    const me = await apiFetch(`${API}/auth/me`);
+    if (!me.ok) { showLogin(); return; }
+    CURRENT = await me.json();
+    enterRole(CURRENT.type);
+  } catch (e) { showLogin(); }
+}
+
+document.getElementById('tabLogin').addEventListener('click', () => setMode('login'));
+document.getElementById('tabSignup').addEventListener('click', () => setMode('signup'));
+
+document.getElementById('submitBtn').addEventListener('click', async () => {
+  const email = document.getElementById('emailInput').value.trim();
+  const password = document.getElementById('pwInput').value;
+  if (!email || !password) { setLoginMsg('Enter your email and password.', true); return; }
+  if (MODE === 'signup' && password.length < 8) { setLoginMsg('Password must be at least 8 characters.', true); return; }
+  setLoginMsg(MODE === 'signup' ? 'Creating account…' : 'Signing in…');
+
+  if (MODE === 'signup') {
+    const name = document.getElementById('nameInput').value.trim() || email;
+    const r = await apiFetch(`${API}/auth/signup`, { method:'POST', headers: H(), body: JSON.stringify({ name, email, password }) });
+    if (!r.ok) { const e = await r.json().catch(()=>({})); setLoginMsg(e.detail || 'Sign up failed.', true); return; }
+    const d = await r.json();
+    CURRENT = { name, type: 'client', id: d.account.id, email: d.account.email };
+    enterRole('client');
+    const box = document.getElementById('clientKeyBox');
+    box.classList.remove('hidden');
+    box.innerHTML = `<strong>Here is your new API key:</strong><br><span class="mono">${d.api_key}</span>`
+      + `<div class="warn">⚠ Copy it now — it is shown only once. Use it in the <code>X-API-Key</code> header, or just stay signed in here.</div>`
+      + ` <button class="btn btn-ghost btn-sm" style="padding:4px 10px; font-size:.78rem;" onclick="navigator.clipboard.writeText('${d.api_key}')">Copy</button>`;
+    return;
+  }
+
+  const r = await apiFetch(`${API}/auth/login`, { method:'POST', headers: H(), body: JSON.stringify({ email, password }) });
+  if (r.ok) { CURRENT = await r.json(); document.getElementById('pwInput').value=''; enterRole(CURRENT.type); }
+  else { const e = await r.json().catch(()=>({})); setLoginMsg(e.detail || 'Sign in failed.', true); }
+});
+document.getElementById('pwInput').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('submitBtn').click(); });
+
+async function signOut() { await apiFetch(`${API}/auth/logout`, { method:'POST' }); CURRENT=null; ROLE=null; showLogin(); }
+document.getElementById('navSignout').addEventListener('click', e => { e.preventDefault(); signOut(); });
+
+// --------------------------------------------------------- Client dashboard
+async function loadDashboard() {
+  const [me, usage] = await Promise.all([
+    apiFetch(`${API}/client/me`).then(r => { if(!r.ok) throw r.status; return r.json(); }),
+    apiFetch(`${API}/client/me/usage?days=30`).then(r => r.ok ? r.json() : {series:[]}),
+  ]);
+  document.getElementById('cName').textContent = me.name;
+  document.getElementById('cPrefix').textContent = me.key_prefix + '…';
+  document.getElementById('cPlan').textContent = me.plan || 'Standard';
+  document.getElementById('cRpm').textContent = me.rpm_limit ? `${me.rpm_limit} req/min` : 'Unlimited';
+  document.getElementById('cMode').textContent = me.over_limit_mode === 'soft' ? 'Soft (serve + flag)' : 'Hard (block at 429)';
+  document.getElementById('cCreated').textContent = new Date(me.created_at).toLocaleDateString();
+  const st = document.getElementById('cStatus');
+  st.innerHTML = me.is_active ? '<span class="pill on">Active</span>' : '<span class="pill off">Revoked</span>';
+  document.getElementById('uTotal').textContent = me.usage.total_requests;
+  document.getElementById('uToday').textContent = me.usage.requests_today;
+  document.getElementById('uMonth').textContent = me.usage.requests_this_month;
+  document.getElementById('uDays').textContent = me.usage.days_since_created;
+  const q = me.monthly_quota;
+  const box = document.getElementById('quotaBox');
+  const banner = document.getElementById('overBanner');
+  if (q) {
+    const used = me.usage.requests_this_month;
+    const pct = Math.min(100, Math.round((used / q) * 100));
+    box.classList.remove('hidden');
+    document.getElementById('quotaText').textContent = `${used.toLocaleString()} of ${q.toLocaleString()} monthly requests used`;
+    document.getElementById('quotaRem').textContent = `${Math.max(0, q - used).toLocaleString()} remaining`;
+    document.getElementById('quotaBar').style.width = pct + '%';
+    document.getElementById('quotaProg').classList.toggle('full', used >= q);
+    if (me.usage.over_quota) {
+      banner.classList.add('show');
+      banner.textContent = me.over_limit_mode === 'soft'
+        ? `You have exceeded your monthly quota of ${q.toLocaleString()}. Requests keep working (soft cap), but overage may apply.`
+        : `You have exceeded your monthly quota of ${q.toLocaleString()}. Requests are blocked (HTTP 429) until the quota resets.`;
+    } else { banner.classList.remove('show'); }
+  } else { box.classList.add('hidden'); banner.classList.remove('show'); }
+  drawChart(usage.series || []);
+  loadHistory();
+}
+
+function drawChart(series) {
+  const max = Math.max(1, ...series.map(s => s.count));
+  document.getElementById('chart').innerHTML = series.map(s =>
+    `<div class="bar" style="height:${(s.count/max)*100}%" title="${s.day}: ${s.count}"></div>`
+  ).join('');
+}
+
+// Client dashboard tabs: Dashboard | OCR | Account
+function switchTab(name) {
+  document.querySelectorAll('#clientTabs .tab').forEach(t => t.classList.toggle('on', t.dataset.tab === name));
+  document.getElementById('paneDash').classList.toggle('hidden', name !== 'dash');
+  document.getElementById('paneOcr').classList.toggle('hidden', name !== 'ocr');
+  document.getElementById('paneAccount').classList.toggle('hidden', name !== 'account');
+}
+document.querySelectorAll('#clientTabs .tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+async function loadHistory() {
+  const tb = document.getElementById('histRows');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center; padding:16px;">Loading…</td></tr>';
+  try {
+    const d = await apiFetch(`${API}/client/me/history?limit=50`).then(r => r.ok ? r.json() : { runs: [] });
+    const runs = d.runs || [];
+    if (!runs.length) { tb.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center; padding:16px;">No OCR runs yet.</td></tr>'; return; }
+    tb.innerHTML = runs.map(r => {
+      const when = new Date(r.created_at).toLocaleString();
+      const tags = [];
+      if (r.table_detection) tags.push('tables');
+      if (r.llm_parsing) tags.push('LLM');
+      const opt = tags.length ? tags.map(t => `<span class="mode-badge mode-soft">${t}</span>`).join(' ') : '<span class="muted">—</span>';
+      return `<tr><td>${when}</td><td>${esc(r.filename || '—')}</td><td>${esc(r.document_type || '—')}</td>`
+        + `<td>${esc(r.lang || '—')}</td><td>${r.text_blocks}</td><td>${r.pages}p · ${r.chars}c</td><td>${opt}</td></tr>`;
+    }).join('');
+  } catch (e) { tb.innerHTML = ''; }
+}
+
+document.getElementById('optParse').addEventListener('change', e => {
+  document.getElementById('fieldsWrap').style.display = e.target.checked ? 'block' : 'none';
+});
+
+document.getElementById('runBtn').addEventListener('click', async () => {
+  if (!fileInput.files[0]) { alert('Choose a file first.'); return; }
+  const runBtn = document.getElementById('runBtn');
+  const meta = document.getElementById('resMeta');
+  const wantParse = document.getElementById('optParse').checked;
+  const wantTable = document.getElementById('optTable').checked;
+  runBtn.disabled = true; meta.style.color = 'var(--muted)';
+  meta.textContent = wantParse ? 'Processing (LLM parsing may take a few seconds)…' : 'Processing…';
+  const form = new FormData();
+  form.append('file', fileInput.files[0]);
+  form.append('lang', document.getElementById('lang').value);
+  form.append('detect_table', wantTable ? 'true' : 'false');
+  form.append('parse_doc', wantParse ? 'true' : 'false');
+  if (wantParse) { const f = document.getElementById('optFields').value.trim(); if (f) form.append('fields', f); }
+  try {
+    const r = await apiFetch(`${API}/ocr`, { method:'POST', body: form });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'error'); }
+    renderOcrResult(await r.json(), { wantParse });
+    loadDashboard();
+  } catch (e) { meta.style.color = 'var(--danger)'; meta.textContent = 'Error: ' + e.message; }
+  finally { runBtn.disabled = false; }
+});
+
+function renderOcrResult(d, opts={}) {
+  const meta = document.getElementById('resMeta');
+  const bits = [`${(d.text_blocks||[]).length} block(s)`, d.document_type, `${(d.pages||[]).length} page(s)`];
+  if ((d.tables||[]).length) bits.push(`${d.tables.length} table(s)`);
+  meta.style.color = 'var(--muted)';
+  meta.textContent = bits.join(' · ');
+  const docBox = document.getElementById('resDoc');
+  if (d.document && Object.keys(d.document).length) {
+    docBox.style.display = 'block';
+    docBox.innerHTML = '<h3>Parsed fields (LLM)</h3><div class="doc-grid">'
+      + Object.entries(d.document).map(([k, v]) =>
+          `<div class="dk">${esc(k)}</div><div>${esc(typeof v === 'object' ? JSON.stringify(v) : String(v))}</div>`
+        ).join('') + '</div>';
+  } else if (opts.wantParse) {
+    docBox.style.display = 'block';
+    docBox.innerHTML = '<h3>Parsed fields (LLM)</h3><p class="muted">No structured fields returned. The LLM may be unconfigured, rate-limited (429), or its response could not be parsed — check the server log, or retry.</p>';
+  } else { docBox.style.display = 'none'; docBox.innerHTML = ''; }
+  const tblBox = document.getElementById('resTables');
+  if ((d.tables||[]).length) {
+    tblBox.style.display = 'block';
+    tblBox.innerHTML = '<h3>Tables</h3>' + d.tables.map(tableToHtml).join('');
+  } else { tblBox.style.display = 'none'; tblBox.innerHTML = ''; }
+  const textSec = document.getElementById('resTextSec');
+  textSec.style.display = 'block';
+  document.getElementById('resOut').textContent = d.full_text || '(no text detected)';
+}
+
+function tableToHtml(t) {
+  const cells = t.cells || [];
+  if (!cells.length) return '';
+  const rows = Math.max(...cells.map(c => c.row)) + 1;
+  const cols = Math.max(...cells.map(c => c.col)) + 1;
+  const grid = Array.from({ length: rows }, () => Array(cols).fill(''));
+  cells.forEach(c => { grid[c.row][c.col] = c.text; });
+  const body = grid.map((row, i) =>
+    '<tr>' + row.map(v => (i === 0 ? `<th>${esc(v)}</th>` : `<td>${esc(v)}</td>`)).join('') + '</tr>'
+  ).join('');
+  return `<table class="tbl">${body}</table>`;
+}
+
+// ---------------------------------------------------------- Admin dashboard
+async function loadAll(){
+  const [sum, clients] = await Promise.all([
+    apiFetch(`${API}/admin/summary`, { headers: H() }).then(r=>{ if(!r.ok) throw r.status; return r.json(); }),
+    apiFetch(`${API}/admin/clients`, { headers: H() }).then(r=>{ if(!r.ok) throw r.status; return r.json(); }),
+  ]);
+  document.getElementById('sTotal').textContent = sum.total_clients;
+  document.getElementById('sActive').textContent = sum.active_clients;
+  document.getElementById('sReq').textContent = sum.total_requests;
+  document.getElementById('sToday').textContent = sum.requests_today;
+  window.__clients = clients;
+  renderRows(clients);
+  loadAdmins();
+}
+
+function monthCell(c){
+  const used = (c.usage && c.usage.requests_this_month) || 0;
+  const q = c.monthly_quota;
+  if (!q) return `<td>${used} <span class="muted">/ ∞</span></td>`;
+  const full = used >= q;
+  return `<td class="${full ? 'quota-full' : ''}">${used} <span class="muted">/ ${q}</span>${full && c.over_limit_mode === 'soft' ? ' <span class="mode-badge mode-soft">over·soft</span>' : ''}</td>`;
+}
+
+function renderRows(clients){
+  const tb = document.getElementById('rows'); tb.innerHTML = '';
+  clients.forEach(c => {
+    const tr = document.createElement('tr');
+    const last = c.last_used_at_txt || (c.usage && c.usage.last_used_at ? new Date(c.usage.last_used_at).toLocaleString() : '—');
+    const used = (c.usage && c.usage.requests_this_month) || 0;
+    const overQ = c.monthly_quota && used >= c.monthly_quota && c.over_limit_mode === 'soft';
+    if (overQ) tr.className = 'over-q';
+    const modeCls = c.over_limit_mode === 'soft' ? 'mode-soft' : 'mode-hard';
+    tr.innerHTML = `<td>#${c.id}</td>`
+      + `<td>${esc(c.name)}${c.plan ? `<span class="plan-badge">${esc(c.plan)}</span>` : ''}<span class="mode-badge ${modeCls}">${c.over_limit_mode === 'soft' ? 'soft' : 'hard'}</span></td>`
+      + `<td class="mono">${esc(c.key_prefix)}…</td>`
+      + `<td>${c.is_active ? '<span class="pill on">Active</span>' : '<span class="pill off">Revoked</span>'}</td>`
+      + monthCell(c)
+      + `<td>${(c.usage && c.usage.total_requests) || 0}</td><td>${last}</td>`
+      + `<td><div class="spark" id="spark-${c.id}">…</div></td>`
+      + `<td style="text-align:right; white-space:nowrap;">`
+      + `<button class="btn btn-ghost btn-sm" data-limits="${c.id}">Limits</button>`
+      + (c.is_active ? ` <button class="btn btn-danger btn-sm" data-revoke="${c.id}">Revoke</button>` : '')
+      + `</td>`;
+    tb.appendChild(tr);
+    loadSpark(c.id);
+  });
+  tb.querySelectorAll('[data-revoke]').forEach(b => b.addEventListener('click', () => revoke(b.dataset.revoke)));
+  tb.querySelectorAll('[data-limits]').forEach(b => b.addEventListener('click', () => editLimits(b.dataset.limits)));
+}
+
+async function loadSpark(id){
+  try {
+    const u = await apiFetch(`${API}/admin/keys/${id}/usage?days=30`, { headers: H() }).then(r=>r.json());
+    const max = Math.max(1, ...u.series.map(s=>s.count));
+    document.getElementById('spark-'+id).innerHTML = u.series.map(s=>`<div class="bar" style="height:${(s.count/max)*30}px" title="${s.day}: ${s.count}"></div>`).join('');
+  } catch(e){ document.getElementById('spark-'+id).innerHTML=''; }
+}
+
+async function revoke(id){
+  if (!confirm('Revoke this client key? They will lose API access immediately.')) return;
+  const r = await apiFetch(`${API}/admin/keys/${id}`, { method:'DELETE', headers: H() });
+  if (r.ok) loadAll(); else alert('Failed to revoke.');
+}
+
+async function editLimits(id){
+  const c = (window.__clients || []).find(x => x.id == id);
+  if (!c) return;
+  const plan = prompt('Plan label (leave blank = none):', c.plan || '');
+  if (plan === null) return;
+  const quota = prompt('Monthly request quota (blank = unlimited):', c.monthly_quota ?? '');
+  if (quota === null) return;
+  const rpm = prompt('Per-minute rate limit (blank = unlimited):', c.rpm_limit ?? '');
+  if (rpm === null) return;
+  const mode = prompt("Over-quota mode: 'hard' (block with 429) or 'soft' (serve + flag):", (c.over_limit_mode || 'hard').toLowerCase());
+  if (mode === null) return;
+  const body = { plan: plan.trim() || null };
+  body.monthly_quota = quota.trim() ? parseInt(quota, 10) : null;
+  body.rpm_limit = rpm.trim() ? parseInt(rpm, 10) : null;
+  const m = mode.trim().toLowerCase();
+  if (m === 'soft' || m === 'hard') body.over_limit_mode = m;
+  const r = await apiFetch(`${API}/admin/keys/${id}`, { method:'PATCH', headers: H(), body: JSON.stringify(body) });
+  if (r.ok) loadAll(); else { const e = await r.json(); alert(e.detail || 'Failed to update.'); }
+}
+
+document.getElementById('createBtn').addEventListener('click', async () => {
+  const name = document.getElementById('newName').value.trim();
+  if (!name) { alert('Enter a client name.'); return; }
+  const plan = document.getElementById('newPlan').value.trim();
+  const quota = document.getElementById('newQuota').value.trim();
+  const rpm = document.getElementById('newRpm').value.trim();
+  const mode = document.getElementById('newMode').value;
+  const payload = { name };
+  if (plan) payload.plan = plan;
+  if (quota) payload.monthly_quota = parseInt(quota, 10);
+  if (rpm) payload.rpm_limit = parseInt(rpm, 10);
+  payload.over_limit_mode = mode;
+  const r = await apiFetch(`${API}/admin/keys`, { method:'POST', headers: H(), body: JSON.stringify(payload) });
+  if (!r.ok) { const e = await r.json(); alert(e.detail || 'error'); return; }
+  const d = await r.json();
+  const box = document.getElementById('adminKeyBox');
+  box.classList.remove('hidden');
+  box.innerHTML = `<strong>${esc(name)}</strong> — API key:<br><span class="mono">${d.key}</span>`
+    + `<div class="warn">⚠ Copy this key now — it is shown only once and cannot be retrieved later.</div>`
+    + ` <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${d.key}')">Copy</button>`;
+  document.getElementById('newName').value = '';
+  document.getElementById('newPlan').value = '';
+  document.getElementById('newQuota').value = '';
+  document.getElementById('newRpm').value = '';
+  document.getElementById('newMode').value = 'hard';
+  loadAll();
+});
+
+async function loadAdmins(){
+  try {
+    const admins = await apiFetch(`${API}/admin/admins`, { headers: H() }).then(r=>{ if(!r.ok) throw r.status; return r.json(); });
+    const tb = document.getElementById('adminRows'); tb.innerHTML = '';
+    admins.forEach(a => {
+      const tr = document.createElement('tr');
+      const last = a.last_login_at ? new Date(a.last_login_at).toLocaleString() : '—';
+      tr.innerHTML = `<td>#${a.id}</td><td>${esc(a.name)}</td><td class="mono">${esc(a.email)}</td>`
+        + `<td>${last}</td>`
+        + `<td>${a.is_active ? '<span class="pill on">Active</span>' : '<span class="pill off">Disabled</span>'}</td>`
+        + `<td style="text-align:right;">${a.is_active && admins.filter(x=>x.is_active).length > 1 ? `<button class="btn btn-danger btn-sm" data-deadm="${a.id}">Deactivate</button>` : ''}</td>`;
+      tb.appendChild(tr);
+    });
+    tb.querySelectorAll('[data-deadm]').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm('Deactivate this admin account? Their sessions will be revoked.')) return;
+      const r = await apiFetch(`${API}/admin/admins/${b.dataset.deadm}`, { method:'DELETE', headers: H() });
+      if (r.ok) loadAdmins(); else { const e = await r.json(); alert(e.detail || 'Failed.'); }
+    }));
+  } catch(e){ /* leave table as-is */ }
+}
+
+document.getElementById('addAdminBtn').addEventListener('click', async () => {
+  const name = document.getElementById('admName').value.trim();
+  const email = document.getElementById('admEmail').value.trim();
+  const password = document.getElementById('admPw').value;
+  if (!email || password.length < 8) { alert('Email and a password of at least 8 characters are required.'); return; }
+  const r = await apiFetch(`${API}/admin/admins`, { method:'POST', headers: H(), body: JSON.stringify({ name: name || email, email, password }) });
+  if (r.ok) {
+    document.getElementById('admName').value=''; document.getElementById('admEmail').value=''; document.getElementById('admPw').value='';
+    loadAdmins();
+  } else { const e = await r.json(); alert(e.detail || 'Failed to add admin.'); }
+});
+
+// ------------------------------------------------------------------- Init
+setMode('login');
+tryAuth();
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  ocr-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OCR_LLM_API_KEY=${OCR_LLM_API_KEY:-}
+      - OCR_LLM_BASE_URL=${OCR_LLM_BASE_URL:-}
+      - OCR_LLM_KEYLESS=${OCR_LLM_KEYLESS:-}
+      - OCR_LLM_MODEL=${OCR_LLM_MODEL:-}
+      - OCR_LLM_TITLE=${OCR_LLM_TITLE:-}
+      - OCR_LLM_REFERER=${OCR_LLM_REFERER:-}
+      - OCR_LLM_MAX_TOKENS=${OCR_LLM_MAX_TOKENS:-4000}
+      - OCR_LLM_MAX_INPUT_CHARS=${OCR_LLM_MAX_INPUT_CHARS:-40000}
+      - OCR_ADMIN_TOKEN=${OCR_ADMIN_TOKEN:-}
+      - OCR_ADMIN_EMAIL=${OCR_ADMIN_EMAIL:-}
+      - OCR_ADMIN_PASSWORD=${OCR_ADMIN_PASSWORD:-}
+      - OCR_SESSION_COOKIE=${OCR_SESSION_COOKIE:-ocr_session}
+      - OCR_ADMIN_SESSION_TTL_HOURS=${OCR_ADMIN_SESSION_TTL_HOURS:-12}
+      - OCR_CLIENT_SESSION_TTL_DAYS=${OCR_CLIENT_SESSION_TTL_DAYS:-7}
+      - OCR_COOKIE_SECURE=${OCR_COOKIE_SECURE:-false}
+      - OCR_SIGNUP_RATE_PER_MIN=${OCR_SIGNUP_RATE_PER_MIN:-10}
+      - OCR_BOOTSTRAP_API_KEY=${OCR_BOOTSTRAP_API_KEY:-}
+      - OCR_AUTH_DB=${OCR_AUTH_DB:-/data/auth.db}
+      - OCR_MAX_UPLOAD_BYTES=${OCR_MAX_UPLOAD_BYTES:-10485760}
+      - OCR_DEFAULT_PLAN=${OCR_DEFAULT_PLAN:-}
+      - OCR_DEFAULT_MONTHLY_QUOTA=${OCR_DEFAULT_MONTHLY_QUOTA:-}
+      - OCR_DEFAULT_RPM_LIMIT=${OCR_DEFAULT_RPM_LIMIT:-}
+      - OCR_DEFAULT_OVER_LIMIT_MODE=${OCR_DEFAULT_OVER_LIMIT_MODE:-hard}
+    volumes:
+      - ocr-auth-data:/data
+    # Lets the container reach a local LLM server on the host machine, e.g.
+    # OCR_LLM_BASE_URL=http://host.docker.internal:11434/v1 (Ollama).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  ocr-auth-data:

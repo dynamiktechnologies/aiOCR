@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.env
+.venv/
+venv/
+env/
+*.log
+.idea/
+.vscode/
+.qoder/
+*.swp
+*.swo
+
+# Auth / API key database (contains hashed keys)
+auth.db
+auth.db-wal
+auth.db-shm
+*.sqlite3
