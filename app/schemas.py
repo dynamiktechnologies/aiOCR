@@ -39,14 +39,25 @@ class PageResult(BaseModel):
     tables: list[Table] = []
 
 
+class DetectedDocument(BaseModel):
+    """What the LLM decided the upload is (only with ``auto_detect`` parsing)."""
+    document_type: str = Field(default="unknown", description="Canonical type: passport, identity_card, driving_license, receipt, not_a_document, ...")
+    label: Optional[str] = Field(default=None, description="Human-readable title, e.g. 'Cafe receipt'")
+    category: Optional[str] = Field(default=None, description="identity | financial | correspondence | reference | not_a_document | other")
+    is_document: bool = Field(default=True, description="False when the image is not a document at all (a photo, packaging, ...)")
+    confidence: Optional[float] = Field(default=None, ge=0, le=1, description="Classifier confidence, 0-1")
+    summary: Optional[str] = Field(default=None, description="One-sentence description of the content")
+
+
 class OCRResponse(BaseModel):
     """OCR response with extracted data."""
     text_blocks: list[TextBlock] = []
     full_text: str = ""
     tables: list[Table] = []
     document: Optional[dict] = None
+    detected: Optional[DetectedDocument] = None
     language: str = "en"
-    document_type: str = "image"  # image, pdf, docx, xlsx
+    document_type: str = "image"  # file format: image, pdf, docx, xlsx
     pages: list[PageResult] = []
 
 

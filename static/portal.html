@@ -186,7 +186,7 @@
       </div>
     </div>
 
-    <!-- Sample use case: the standalone passport / ID demo, embedded so a
+    <!-- Sample use case: the standalone document demo, embedded so a
          client can try the flow with their own key or portal session -->
     <div class="tabpane hidden" id="paneDemo">
       <div class="card">
@@ -195,10 +195,11 @@
           <a class="btn btn-ghost btn-sm" href="/demo" target="_blank" rel="noopener">Open full page</a>
         </div>
         <p class="muted" style="margin-top:10px;">
-          A passport / identity-card form filled straight from OCR. Upload an image and the extracted values land in the
-          fields below — no key needed while you're signed in, and edits to the field list are sent to the LLM prompt.
+          Any document, typed by the LLM. Upload a passport, ID card, driving licence, receipt — or a photo — and the
+          response names the document type and fills a form with the values it found. No key needed while you're signed
+          in, and in manual mode edits to the field list are sent to the LLM prompt.
         </p>
-        <iframe class="demo-frame" id="demoFrame" title="Sample use case: passport and ID card OCR"
+        <iframe class="demo-frame" id="demoFrame" title="Sample use case: document OCR with type detection"
                 loading="lazy" data-src="/demo?embed=1"></iframe>
       </div>
     </div>

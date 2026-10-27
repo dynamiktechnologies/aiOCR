@@ -35,7 +35,7 @@ from .auth import (
 )
 from .schemas import (
     OCRResponse, HealthResponse, TextBlock, Table, TableCell, PageResult,
-    APIKeyInfo,
+    APIKeyInfo, DetectedDocument,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -172,7 +172,7 @@ async def admin_portal():
 
 @app.get("/demo", include_in_schema=False)
 async def demo_page():
-    """Standalone demo: OCR passport / identity-card details into a filled form."""
+    """Standalone demo: OCR any document, let the LLM name the type, fill a form."""
     return FileResponse(static_dir / "demo.html")
 
 
@@ -215,6 +215,56 @@ def _parse_fields(raw: Optional[str]) -> Optional[list]:
             seen.add(name.lower())
             out.append(name)
     return out or None
+
+
+# Keys the auto-detect answer uses for classification; everything else under
+# "fields" is the caller's data.
+_DETECTED_KEYS = {"document_type", "label", "category", "is_document", "confidence", "summary", "fields"}
+
+
+def _detected_from_llm(payload: dict) -> DetectedDocument:
+    """Shape an auto-detect answer into DetectedDocument.
+
+    Models drift: confidence can arrive as "high" or 95, is_document as a
+    string, and document_type may be missing — coerce instead of returning a
+    500 to the client.
+    """
+    confidence: Optional[float] = None
+    raw_conf = payload.get("confidence")
+    if raw_conf is not None and not isinstance(raw_conf, bool):
+        try:
+            confidence = float(str(raw_conf).strip().rstrip("%"))
+            if confidence > 1:
+                confidence = confidence / 100
+            confidence = max(0.0, min(1.0, confidence))
+        except (TypeError, ValueError):
+            confidence = None
+
+    raw_doc = payload.get("is_document")
+    if isinstance(raw_doc, bool):
+        is_document = raw_doc
+    else:
+        is_document = str(raw_doc).strip().lower() not in {"false", "0", "no", "n"}
+
+    document_type = str(payload.get("document_type") or "unknown").strip() or "unknown"
+    if document_type.lower() in {"not_a_document", "not a document", "none"}:
+        document_type = "not_a_document"
+        is_document = False
+
+    def _text(key: str) -> Optional[str]:
+        value = payload.get(key)
+        if value is None or value == "":
+            return None
+        return str(value).strip() or None
+
+    return DetectedDocument(
+        document_type=document_type,
+        label=_text("label"),
+        category=_text("category"),
+        is_document=is_document,
+        confidence=confidence,
+        summary=_text("summary"),
+    )
 
 
 async def _process_ocr_upload(
@@ -282,6 +332,14 @@ async def ocr_endpoint(
             "Omit to let the parser choose a generic set."
         ),
     ),
+    auto_detect: bool = Form(
+        default=False,
+        description=(
+            "With parse_doc=true, let the LLM name the document type (receipt, "
+            "driving licence, passport, ...) and choose the fields itself. 'fields' "
+            "is ignored and the response adds a 'detected' block."
+        ),
+    ),
     max_pages: int = Form(default=20, description="Max PDF pages to process"),
     client: APIKeyInfo = Depends(resolve_client),
     response: Response = None,
@@ -301,6 +359,9 @@ async def ocr_endpoint(
     - **parse_doc**: Parse document into structured fields (needs an OpenAI-compatible LLM endpoint; a local server such as Ollama works without an API key)
     - **fields**: With parse_doc, the exact form fields to extract (JSON array or
       comma-separated). Omit for a generic field set.
+    - **auto_detect**: With parse_doc, let the LLM classify the document and pick the
+      fields (works for receipts, licences, invoices — anything). The response then
+      carries a `detected` block and `document` holds the extracted fields.
     - **max_pages**: Cap on the number of PDF pages processed
     """
     _apply_limit_headers(response, enforce_limits(client))
@@ -343,16 +404,28 @@ async def ocr_endpoint(
     # otherwise parse_document falls back to the server-wide OCR_LLM_* settings.
     if parse_doc:
         try:
+            auto = bool(auto_detect)
             parsed = parse_document(
                 full_text,
-                fields=_parse_fields(fields),
+                fields=None if auto else _parse_fields(fields),
+                auto=auto,
                 **(get_llm_override(client.id) or {}),
             )
             # The LLM may answer with a JSON array (or a bare scalar); the
             # response model requires a field->value object, so normalise.
             if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
                 parsed = parsed[0]
-            if isinstance(parsed, dict) and parsed:
+            if auto and isinstance(parsed, dict) and parsed:
+                response.detected = _detected_from_llm(parsed)
+                auto_fields = parsed.get("fields")
+                if isinstance(auto_fields, dict) and auto_fields:
+                    response.document = auto_fields
+                else:
+                    # Model ignored the envelope: keep any flat values as fields.
+                    flat = {k: v for k, v in parsed.items() if k not in _DETECTED_KEYS}
+                    if flat:
+                        response.document = flat
+            elif isinstance(parsed, dict) and parsed:
                 response.document = parsed
             elif parsed:
                 logger.warning("Ignoring LLM output: expected a JSON object, got %s", type(parsed).__name__)

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI OCR — Passport / ID Demo</title>
+<title>AI OCR — Document Demo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -28,6 +28,10 @@
     display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .68rem; text-align: center;
     background: hsl(var(--muted-h) / .3); }
   .doccard .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; align-content: start; }
+  /* Receipts, letters and anything else that is not a card have no portrait:
+     drop the photo column so the fields use the full width. */
+  .doccard.nophoto .photo { display: none; }
+  .doccard.nophoto .body { grid-template-columns: 1fr; }
   .docfield .fl { font-family: var(--font-mono); font-size: .6rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
   .docfield .fv { font-size: .92rem; margin-top: 2px; word-break: break-word; }
   .docfield.full { grid-column: 1 / -1; }
@@ -61,7 +65,7 @@
 </head>
 <body>
   <nav>
-    <div class="brand"><span>AI OCR</span> · Passport / ID Demo</div>
+    <div class="brand"><span>AI OCR</span> · Document Demo</div>
     <div class="links">
       <a href="/">Portal</a>
       <a href="/docs">API Docs</a>
@@ -71,17 +75,20 @@
 
   <div class="wrap" style="max-width:1040px;">
     <div class="demo-head">
-      <h1>Identity <span>OCR</span> demo</h1>
-      <div class="sub">Upload a passport or ID card and the service extracts the details straight into the form below.</div>
+      <h1>Document <span>OCR</span> demo</h1>
+      <div class="sub">Upload a passport, ID card, driving licence, receipt — or anything else. The service names the document type and fills the form with what it finds.</div>
     </div>
 
     <div class="card">
       <h2>1 · Configure</h2>
       <div class="flex">
-        <div style="flex:1; min-width:160px;"><label>Document type</label>
+        <div style="flex:1; min-width:190px;"><label>Document type</label>
           <select id="docType">
+            <option value="auto" selected>Detect automatically</option>
             <option value="passport">Passport</option>
             <option value="idcard">Identity card</option>
+            <option value="license">Driving licence</option>
+            <option value="receipt">Receipt / invoice</option>
           </select>
         </div>
         <div style="flex:1; min-width:120px;"><label>Language</label><select id="lang"></select></div>
@@ -90,24 +97,24 @@
         </div>
       </div>
       <div style="height:14px"></div>
-      <label>Fields to extract <span class="muted">(edit to add/remove — sent to the LLM prompt)</span></label>
+      <label>Fields to extract <span class="muted" id="fieldsHintLabel">(auto — the LLM picks them)</span></label>
       <textarea id="fields" rows="3" style="width:100%; resize:vertical;" placeholder="comma-separated field names"></textarea>
-      <p class="muted" style="margin-top:6px;">Dates come back as <code>YYYY-MM-DD</code>; the machine-readable zone is returned as <code>mrz_line1/2</code> when present.</p>
+      <p class="muted" style="margin-top:6px;" id="fieldsHint">Auto mode: the LLM names the document (passport, ID card, driving licence, receipt, …) and returns the fields it finds. It only sees the OCR text, so a photo with no wording comes back as “not a document”.</p>
     </div>
 
     <div class="card">
       <h2>2 · Upload &amp; extract</h2>
-      <p class="muted" style="margin-bottom:10px;">Front is required. Add the back too and both sides are OCR'd and parsed together as one document.</p>
-      <label>Front</label>
+      <p class="muted" style="margin-bottom:10px;">Upload the document. Add a second image (back side, extra page) and both are read as one document.</p>
+      <label>Document</label>
       <div class="filedrop" id="dropFront">
         <input type="file" id="file" accept="image/*,.pdf">
-        <span id="fileLabel">Drop the front or click to browse · PNG, JPG, PDF</span>
+        <span id="fileLabel">Drop the document or click to browse · PNG, JPG, PDF</span>
       </div>
       <div style="height:12px"></div>
-      <label>Back <span class="muted">(optional)</span></label>
+      <label>Second side <span class="muted">(optional)</span></label>
       <div class="filedrop" id="dropBack">
         <input type="file" id="fileBack" accept="image/*,.pdf">
-        <span id="fileBackLabel">Drop the back or click to browse · PNG, JPG, PDF</span>
+        <span id="fileBackLabel">Drop the back or second page · PNG, JPG, PDF</span>
       </div>
       <div class="flex" style="margin-top:14px;">
         <button class="btn" id="runBtn">Extract details</button>
@@ -120,7 +127,7 @@
         <h2>3 · Document preview</h2>
         <div class="verdict" id="verdict"></div>
         <div class="doccard" id="doccard">
-          <div class="band"><span class="t" id="docTitle">PASSPORT</span><span class="c" id="docCountry">—</span></div>
+          <div class="band"><span class="t" id="docTitle">DOCUMENT</span><span class="c" id="docCountry">—</span></div>
           <div class="body">
             <div class="photo">photo</div>
             <div class="fields" id="previewFields"></div>
@@ -151,21 +158,32 @@
 const API = window.location.origin;
 const LANGS = ['en','ch','chinese_cht','japan','korean','fr','de','es','pt','ru','ar','hi','it','pl','nl','tr','vi','th','ms','id','tl','sw'];
 const PRESETS = {
+  auto:     [],
   passport: ['document_type','issuing_country','surname','given_names','passport_number','nationality',
              'date_of_birth','sex','place_of_birth','date_of_issue','date_of_expiry','mrz_line1','mrz_line2'],
   idcard:   ['document_type','issuing_country','full_name','id_number','nationality','date_of_birth','sex',
              'place_of_birth','address','date_of_issue','date_of_expiry','mrz_line1','mrz_line2'],
+  license:  ['document_type','issuing_country','full_name','license_number','date_of_birth','address',
+             'vehicle_categories','date_of_issue','date_of_expiry'],
+  receipt:  ['document_type','merchant','date','receipt_number','items','subtotal','tax','total',
+             'payment_method','currency'],
 };
 const LABELS = {
   document_type:'Type', issuing_country:'Country', surname:'Surname', given_names:'Given names',
   full_name:'Full name', passport_number:'Passport no.', id_number:'ID number', nationality:'Nationality',
   date_of_birth:'Date of birth', sex:'Sex', place_of_birth:'Place of birth', address:'Address',
   date_of_issue:'Date of issue', date_of_expiry:'Date of expiry', mrz_line1:'MRZ line 1', mrz_line2:'MRZ line 2',
+  merchant:'Merchant', receipt_number:'Receipt no.', date:'Date', items:'Items', subtotal:'Subtotal',
+  tax:'Tax', total:'Total', payment_method:'Payment method', currency:'Currency',
+  license_number:'Licence no.', vehicle_categories:'Vehicle classes',
 };
-// Fields shown in the card body (MRZ goes to the band, not the grid)
+// Fields shown in the card body (MRZ goes to the band, not the grid). Auto mode
+// shows whatever the LLM returned, in the order it returned it.
 const CARD_ORDER = {
   passport: ['surname','given_names','passport_number','nationality','date_of_birth','sex','place_of_birth','date_of_issue','date_of_expiry'],
   idcard:   ['full_name','id_number','nationality','date_of_birth','sex','place_of_birth','address','date_of_issue','date_of_expiry'],
+  license:  ['full_name','license_number','date_of_birth','address','vehicle_categories','date_of_issue','date_of_expiry'],
+  receipt:  ['merchant','date','receipt_number','total','subtotal','tax','payment_method','currency','items'],
 };
 
 function wireDrop(zoneId, inputId, labelId, placeholder){
@@ -184,77 +202,110 @@ const fileBackInput = wireDrop('dropBack','fileBack','fileBackLabel','Drop the b
 
 let CURRENT_FIELDS = [];
 let DATA = {};
-let LAST_META = { document_type: '', full_text: '' };
+let LAST_META = { document_type: '', full_text: '', detected: null };
 
 function setStatus(msg, cls){ const s=document.getElementById('status'); s.textContent=msg||''; s.className='status '+(cls||''); }
 function esc(s){ const d=document.createElement('div'); d.textContent=s==null?'':String(s); return d.innerHTML; }
 function set(key, v){ DATA[key]=v; render(); }
 
-// --- Validation: flag when the uploaded image is not the selected document ---
-const TYPE_LABEL = { passport: 'a passport', idcard: 'an identity card' };
-const HALLMARK = {
-  passport: ['passport_number', 'mrz_line1', 'mrz_line2'],   // must see at least one
-  idcard:   ['id_number', 'full_name', 'address'],           // must see at least one
+// --- Type handling: the LLM's document_type drives both the preview and the verdict ---
+const TYPE_META = {
+  passport: { label: 'a passport',        title: 'PASSPORT',        family: 'passport',       hallmarks: ['passport_number','mrz_line1','mrz_line2'] },
+  idcard:   { label: 'an identity card',  title: 'IDENTITY CARD',   family: 'id',             hallmarks: ['id_number','full_name','address'] },
+  license:  { label: 'a driving licence', title: 'DRIVING LICENCE', family: 'driver_license', hallmarks: ['license_number','vehicle_categories','full_name'] },
+  receipt:  { label: 'a receipt',         title: 'RECEIPT',         family: 'receipt',        hallmarks: ['total','date','merchant'] },
 };
-// Document-type classification, driven mainly by the LLM's document_type field.
-// A driving license is its OWN category — it is neither a passport nor an identity card.
+const FAMILY_NAME = { passport: 'a passport', id: 'an identity card', driver_license: 'a driving licence', receipt: 'a receipt' };
+// Only card-like documents carry a portrait, so only they get the photo column.
+const HAS_PHOTO = { passport: 1, id: 1, driver_license: 1 };
 const GENERIC = /^(|unknown|none|n\/?a|image|document|doc|other|form|page|card|id)$/i;
-const DL_KW = /driver['’]?\s*licen[cs]e|driving\s*licen[cs]e|provisional\s*licen[cs]e|chauffeur/i;
-const ID_TEXT = /identity\s*card|national\s*id(?:entity)?|resident\s*card|citizen(?:['’]s)?\s*id|personal\s*number|personal\s*identification|kad\s*pengenalan|pengenalan|\bmykad\b|kad\s*identiti|identiti|kartu\s*tanda\s*penduduk|\bktp\b|kartu\s*identitas|identitas|penduduk/i;
-function hasVal(k){ const v = DATA[k]; return v != null && String(v).trim() !== ''; }
+const DL_KW = /driver['’]?[\s_-]*licen[cs]e|driving[\s_-]*licen[cs]e|provisional[\s_-]*licen[cs]e|chauffeur/i;
+const RECEIPT_KW = /receipt|tax[\s_-]*invoice|\binvoice\b|till[\s_-]*slip|sales[\s_-]*slip/i;
+const RECEIPT_TEXT = /receipt|tax\s*invoice|\binvoice\s*(?:no|#|number)|subtotal|\bcashier\b|payment\s*(?:method|received)|\bchange\s*due\b/i;
+const ID_TEXT = /identity[\s_-]*card|national[\s_-]*id(?:entity)?|resident[\s_-]*card|citizen(?:['’]s)?[\s_-]*id|personal[\s_-]*(?:number|identification)|kad[\s_-]*pengenalan|pengenalan|\bmykad\b|kad[\s_-]*identiti|identiti|kartu[\s_-]*tanda[\s_-]*penduduk|\bktp\b|kartu[\s_-]*identitas|identitas|penduduk/i;
+// Canonical names the LLM emits -> the families this page knows about.
+const CANON = {
+  passport: 'passport', travel_document: 'passport',
+  identity_card: 'id', id_card: 'id', idcard: 'id', national_id: 'id', resident_card: 'id', mykad: 'id',
+  driving_license: 'driver_license', driving_licence: 'driver_license', drivers_license: 'driver_license', license: 'driver_license',
+  receipt: 'receipt', invoice: 'receipt', tax_invoice: 'receipt',
+  not_a_document: 'not_a_document', photo: 'not_a_document', photograph: 'not_a_document', image: 'not_a_document',
+};
+function hasVal(k){ const v = DATA[k]; return v != null && (Array.isArray(v) ? v.length > 0 : String(v).trim() !== ''); }
 function filledCount(){ return Object.keys(DATA).filter(hasVal).length; }
+function prettyType(t) {
+  const s = String(t || '').replace(/_+/g, ' ').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
 
 function detectCategory(guessRaw, text) {
   const g = (guessRaw || '').toLowerCase();
   const t = text || '';
   if (DL_KW.test(g) || DL_KW.test(t)) return 'driver_license';
-  const gP = /passport/.test(g) || /travel\s*document/.test(g);
-  const gI = /identity|\bid\s*card\b|\bidcard\b|national|resident|citizen|personal\s*number|pengenalan|mykad|identiti|kartu\s*tanda|penduduk|\bktp\b|identitas/.test(g);
+  if (RECEIPT_KW.test(g)) return 'receipt';
+  const gP = /passport|travel[\s_-]*document/.test(g);
+  const gI = /identity|\bid[\s_-]*card\b|idcard|national|resident|citizen|personal[\s_-]*number|pengenalan|mykad|identiti|kartu[\s_-]*tanda|penduduk|\bktp\b|identitas/.test(g);
   if (gP && !gI) return 'passport';
   if (gI && !gP) return 'id';
   // Ambiguous or generic guess → rely on the document's own words / MRZ structure.
   if (/\bp\s*<[a-z]{3}/i.test(t)) return 'passport';
   if (ID_TEXT.test(t)) return 'id';
   if (/passport/i.test(t)) return 'passport';
-  if (guessRaw && !GENERIC.test(guessRaw)) return 'other';   // e.g. "receipt", "invoice"
+  if (RECEIPT_TEXT.test(t)) return 'receipt';
+  if (guessRaw && !GENERIC.test(guessRaw)) return 'other';   // e.g. "letter", "boarding pass"
   return 'unknown';
+}
+function familyOf(docType) {
+  const key = String(docType || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+  return CANON[key] || detectCategory(docType, LAST_META.full_text || '');
 }
 
 function validate() {
   const kind = document.getElementById('docType').value;
-  const family = kind === 'passport' ? 'passport' : 'id';
-  const label = TYPE_LABEL[kind];
-  const otherName = kind === 'passport' ? 'an identity card' : 'a passport';
-  const text = LAST_META.full_text || '';
+  const text = (LAST_META.full_text || '').trim();
   const filled = filledCount();
-  if (Object.keys(DATA).length === 0 || filled === 0 || text.trim().length < 8) {
-    return { level: 'error', msg: 'No readable details found — this does not look like a valid document, or the image is too blurry/cropped. Upload a clear photo of ' + label + '.' };
+
+  // Auto mode: report what the LLM decided instead of second-guessing it.
+  if (kind === 'auto') {
+    const det = LAST_META.detected || null;
+    if (det && det.is_document === false) {
+      return { level: 'warn', msg: 'Not a document' + (det.summary ? ' — ' + det.summary : '.') };
+    }
+    if (!text) {
+      return { level: 'warn', msg: 'No readable text — this looks like a photo rather than a document. Upload a receipt, licence, ID card or any other text-bearing document.' };
+    }
+    if (!filled) {
+      return { level: 'warn', msg: 'The text was read, but no fields came back for this document.' };
+    }
+    const name = (det && (det.label || prettyType(det.document_type))) || 'document';
+    const conf = (det && det.confidence != null) ? Math.round(det.confidence * 100) + '% confident · ' : '';
+    const low = det && det.confidence != null && det.confidence < 0.5;
+    return {
+      level: low ? 'warn' : 'ok',
+      msg: (low ? 'Low confidence — detected ' : 'Detected ') + name + ' · ' + conf + filled + ' field(s) extracted.'
+        + (det && det.summary ? ' ' + det.summary : ''),
+    };
+  }
+
+  // Manual mode: the user promised a specific document, so check the upload matches.
+  const meta = TYPE_META[kind];
+  if (Object.keys(DATA).length === 0 || filled === 0 || text.length < 8) {
+    return { level: 'error', msg: 'No readable details found — this does not look like ' + meta.label + ', or the image is too blurry/cropped. Upload a clear photo of ' + meta.label + '.' };
   }
   const guessRaw = (DATA['document_type'] || '').toString().trim();
   const cat = detectCategory(guessRaw, text);
-  const hall = HALLMARK[kind].filter(hasVal).length;
-
-  // Driving license is not supported by this demo at all (it's neither a passport nor an ID card).
-  if (cat === 'driver_license') {
-    return { level: 'error', msg: 'This is a driving license, which isn’t supported here. Please upload a passport or identity card.' };
+  if (cat !== 'unknown' && cat !== meta.family) {
+    const seen = FAMILY_NAME[cat] || (guessRaw ? '“' + guessRaw + '”' : 'a different document');
+    return { level: 'error', msg: 'Wrong document — this looks like ' + seen + ', not ' + meta.label + '. Switch the Document type or upload the right file.' };
   }
-  // A concrete non-credential document (receipt, invoice, letter…).
-  if (cat === 'other') {
-    return { level: 'error', msg: 'Wrong document — this looks like “' + guessRaw + '”, not ' + label + '. Upload a clear passport or identity card.' };
-  }
-  // A recognized credential, but of the other family than the one selected.
-  if ((cat === 'passport' || cat === 'id') && cat !== family) {
-    return { level: 'error', msg: 'Wrong document selected. This looks like ' + otherName + ', but you chose ' + label + '. Switch the Document type or upload the correct document.' };
-  }
-  // Matching family (or guess too generic to classify): require this type's key fields.
-  if (hall === 0) {
-    const expect = HALLMARK[kind].map(k => LABELS[k] || k).join(', ');
-    return { level: 'error', msg: 'Could not detect ' + label + ' — none of its key fields (' + expect + ') were found. The upload may be the wrong document or unreadable.' };
+  if (meta.hallmarks.filter(hasVal).length === 0) {
+    const expect = meta.hallmarks.map(k => LABELS[k] || k).join(', ');
+    return { level: 'error', msg: 'Could not detect ' + meta.label + ' — none of its key fields (' + expect + ') were found. The upload may be the wrong document or unreadable.' };
   }
   if (filled <= 2) {
-    return { level: 'warn', msg: 'Unclear result: only ' + filled + ' field(s) recognized for ' + label + '. The image may be blurry, low-light, or only partially shown.' };
+    return { level: 'warn', msg: 'Unclear result: only ' + filled + ' field(s) recognized for ' + meta.label + '. The image may be blurry, low-light, or only partially shown.' };
   }
-  return { level: 'ok', msg: 'Validated as ' + label + ' — ' + filled + ' field(s) extracted.' };
+  return { level: 'ok', msg: 'Validated as ' + meta.label + ' — ' + filled + ' field(s) extracted.' };
 }
 
 function setVerdict(v) {
@@ -343,78 +394,115 @@ function applyNormalization() {
 
 function applyPreset(){
   const kind = document.getElementById('docType').value;
-  document.getElementById('fields').value = PRESETS[kind].join(', ');
+  const ta = document.getElementById('fields');
+  const hint = document.getElementById('fieldsHint');
+  const hintLabel = document.getElementById('fieldsHintLabel');
+  if (kind === 'auto') {
+    ta.value = '';
+    ta.disabled = true;
+    ta.placeholder = 'Auto — the LLM classifies the document and picks the fields';
+    hintLabel.textContent = '(auto — the LLM picks them)';
+    hint.textContent = 'Auto mode: the LLM names the document (passport, ID card, driving licence, receipt, …) and returns the fields it finds. It only sees the OCR text, so a photo with no wording comes back as “not a document”.';
+  } else {
+    ta.disabled = false;
+    ta.value = PRESETS[kind].join(', ');
+    ta.placeholder = 'comma-separated field names';
+    hintLabel.textContent = '(edit to add/remove — sent to the LLM prompt)';
+    hint.innerHTML = 'Dates come back as <code>YYYY-MM-DD</code>; the machine-readable zone is returned as <code>mrz_line1/2</code> when present.';
+  }
+}
+
+function isAuto(){ return document.getElementById('docType').value === 'auto'; }
+function fmtVal(v){
+  if (v == null || v === '') return '';
+  if (Array.isArray(v)) {
+    return v.map(x => (x && typeof x === 'object')
+      ? Object.values(x).filter(y => y != null && String(y).trim() !== '').join(' · ')
+      : String(x)).join(' · ');
+  }
+  if (typeof v === 'object') {
+    return Object.entries(v).map(([k, x]) => (LABELS[k] || prettyType(k)) + ': ' + x).join(' · ');
+  }
+  return String(v);
+}
+function previewFields(){
+  const kind = document.getElementById('docType').value;
+  if (kind === 'auto') return CURRENT_FIELDS.filter(k => k !== 'mrz_line1' && k !== 'mrz_line2');
+  return (CARD_ORDER[kind] || []).filter(k => CURRENT_FIELDS.includes(k));
+}
+const FULL_WIDTH = { surname:1, given_names:1, full_name:1, address:1, items:1, mrz_line1:1, mrz_line2:1 };
+
+function renderPreview(){
+  const kind = document.getElementById('docType').value;
+  const auto = kind === 'auto';
+  const det = LAST_META.detected;
+  const meta = TYPE_META[kind];
+
+  // Band: document name on the left, a small chip on the right.
+  let title = 'DOCUMENT', chip = '—';
+  if (auto) {
+    if (det) {
+      title = det.label || prettyType(det.document_type) || 'DOCUMENT';
+      chip = [String(det.category || det.document_type || '').replace(/_+/g, ' '), det.confidence != null ? Math.round(det.confidence * 100) + '%' : ''].filter(Boolean).join(' · ') || '—';
+    }
+  } else if (meta) {
+    title = meta.title;
+    chip = DATA['issuing_country'] || DATA['nationality'] || DATA['merchant'] || '—';
+  }
+  document.getElementById('docTitle').textContent = String(title).toUpperCase();
+  document.getElementById('docCountry').textContent = chip;
+
+  // The portrait column only makes sense for cards.
+  const fam = auto ? (det ? familyOf(det.document_type) : 'unknown') : (meta ? meta.family : 'unknown');
+  document.getElementById('doccard').classList.toggle('nophoto', !HAS_PHOTO[fam]);
+
+  // Field grid
+  document.getElementById('previewFields').innerHTML = previewFields().map(k => {
+    const full = FULL_WIDTH[k] ? ' full' : '';
+    const shown = hasVal(k) ? esc(fmtVal(DATA[k])) : '<span class="empty-fv">—</span>';
+    return `<div class="docfield${full}"><div class="fl">${esc(LABELS[k] || prettyType(k))}</div><div class="fv">${shown}</div></div>`;
+  }).join('') || '<div class="docfield full"><div class="fv empty-fv">' + (LAST_META.detected || LAST_META.full_text ? 'No fields were returned.' : 'No fields yet — run an extraction.') + '</div></div>';
+
+  // MRZ band
+  const mrz = [(DATA['mrz_line1']||'').toString(), (DATA['mrz_line2']||'').toString()].filter(Boolean).join('\n');
+  const band = document.getElementById('mrz');
+  band.style.display = mrz ? 'block' : 'none';
+  band.textContent = mrz;
 }
 
 function render(){
-  const kind = document.getElementById('docType').value;
-  document.getElementById('docTitle').textContent = kind === 'passport' ? 'PASSPORT' : 'IDENTITY CARD';
-  document.getElementById('docCountry').textContent = DATA['issuing_country'] || DATA['nationality'] || '—';
-
-  // card preview fields
-  const order = CARD_ORDER[kind].filter(k => CURRENT_FIELDS.includes(k));
-  document.getElementById('previewFields').innerHTML = order.map(k => {
-    const v = DATA[k];
-    const full = (k === 'surname' || k === 'given_names' || k === 'full_name' || k === 'address') ? ' full' : '';
-    const shown = (v == null || v === '') ? '<span class="empty-fv">—</span>' : esc(v);
-    return `<div class="docfield${full}"><div class="fl">${esc(LABELS[k]||k)}</div><div class="fv">${shown}</div></div>`;
-  }).join('');
-
-  // MRZ band
-  const l1 = (DATA['mrz_line1']||'').toString();
-  const l2 = (DATA['mrz_line2']||'').toString();
-  const mrz = [l1, l2].filter(x=>x).join('\n');
-  const band = document.getElementById('mrz');
-  if (mrz) { band.style.display='block'; band.textContent = mrz; } else { band.style.display='none'; band.textContent=''; }
-
-  // editable grid
+  renderPreview();
   document.getElementById('editGrid').innerHTML = CURRENT_FIELDS.map(k => {
-    const full = (k==='mrz_line1'||k==='mrz_line2'||k==='address'||k==='surname'||k==='given_names'||k==='full_name') ? ' full':'';
-    const val = DATA[k]==null?'':String(DATA[k]);
-    return `<div class="ef${full}"><label>${esc(LABELS[k]||k)}</label>`
+    const full = FULL_WIDTH[k] ? ' full' : '';
+    const val = hasVal(k) ? fmtVal(DATA[k]) : '';
+    return `<div class="ef${full}"><label>${esc(LABELS[k] || prettyType(k))}</label>`
       + `<input type="text" data-k="${esc(k)}" value="${esc(val)}"></div>`;
   }).join('') || '<div class="muted">No fields.</div>';
   document.querySelectorAll('#editGrid input[data-k]').forEach(inp =>
-    inp.addEventListener('input', e => { DATA[e.target.dataset.k]=e.target.value; renderPreviewOnly(); }));
-
-  // raw json
-  document.getElementById('rawJson').textContent = JSON.stringify(DATA, null, 2);
+    inp.addEventListener('input', e => { DATA[e.target.dataset.k] = e.target.value; renderPreview(); renderJson(); }));
+  renderJson();
 }
+function renderJson(){ document.getElementById('rawJson').textContent = JSON.stringify(DATA, null, 2); }
 
-// Lighter re-render for typing (don't rebuild inputs, avoids focus loss)
-function renderPreviewOnly(){
-  const kind = document.getElementById('docType').value;
-  document.getElementById('docCountry').textContent = DATA['issuing_country'] || DATA['nationality'] || '—';
-  const order = CARD_ORDER[kind].filter(k => CURRENT_FIELDS.includes(k));
-  document.getElementById('previewFields').innerHTML = order.map(k => {
-    const v = DATA[k];
-    const full = (k==='surname'||k==='given_names'||k==='full_name'||k==='address') ? ' full':'';
-    const shown = (v==null||v==='') ? '<span class="empty-fv">—</span>' : esc(v);
-    return `<div class="docfield${full}"><div class="fl">${esc(LABELS[k]||k)}</div><div class="fv">${shown}</div></div>`;
-  }).join('');
-  const l1=(DATA['mrz_line1']||'').toString(), l2=(DATA['mrz_line2']||'').toString();
-  const band=document.getElementById('mrz'); const m=[l1,l2].filter(Boolean).join('\n');
-  band.style.display = m ? 'block':'none'; band.textContent = m;
-  document.getElementById('rawJson').textContent = JSON.stringify(DATA, null, 2);
-}
-
-document.getElementById('docType').addEventListener('change', () => { applyPreset(); DATA={}; CURRENT_FIELDS=[]; LAST_META={document_type:'',full_text:''}; render(); clearVerdict(); });
+document.getElementById('docType').addEventListener('change', () => { applyPreset(); DATA={}; CURRENT_FIELDS=[]; LAST_META={document_type:'',full_text:'',detected:null}; render(); clearVerdict(); });
 
 document.getElementById('runBtn').addEventListener('click', async () => {
-  if (!fileInput.files[0]) { setStatus('Choose the front image first.', 'err'); return; }
-  const fieldList = document.getElementById('fields').value.split(',').map(x=>x.trim()).filter(Boolean);
-  if (!fieldList.length) { setStatus('Add at least one field to extract.', 'err'); return; }
+  if (!fileInput.files[0]) { setStatus('Choose a document first.', 'err'); return; }
+  const auto = isAuto();
+  const fieldList = auto ? [] : document.getElementById('fields').value.split(',').map(x=>x.trim()).filter(Boolean);
+  if (!auto && !fieldList.length) { setStatus('Add at least one field to extract.', 'err'); return; }
   const runBtn = document.getElementById('runBtn');
   const twoSided = !!fileBackInput.files[0];
   clearVerdict();
-  runBtn.disabled = true; setStatus(twoSided ? 'Extracting from front + back… (OCR + LLM parsing may take a few seconds)' : 'Extracting… (OCR + LLM parsing may take a few seconds)');
+  runBtn.disabled = true; setStatus(twoSided ? 'Reading both images… (OCR + LLM parsing may take a few seconds)' : 'Reading the document… (OCR + LLM parsing may take a few seconds)');
   const form = new FormData();
   form.append('file', fileInput.files[0]);
   if (twoSided) form.append('extra_files', fileBackInput.files[0]);
   form.append('lang', document.getElementById('lang').value);
   form.append('detect_table', 'false');
   form.append('parse_doc', 'true');
-  form.append('fields', fieldList.join(','));
+  if (auto) form.append('auto_detect', 'true');
+  else form.append('fields', fieldList.join(','));
   const headers = {};
   const key = document.getElementById('apiKey').value.trim();
   if (key) headers['X-API-Key'] = key;
@@ -422,15 +510,21 @@ document.getElementById('runBtn').addEventListener('click', async () => {
     const r = await fetch(`${API}/ocr`, { method:'POST', body: form, headers, credentials: 'same-origin' });
     if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || ('HTTP '+r.status)); }
     const d = await r.json();
-    CURRENT_FIELDS = fieldList;
     DATA = (d && d.document) ? Object.assign({}, d.document) : {};
+    CURRENT_FIELDS = auto ? Object.keys(DATA) : fieldList;
+    LAST_META = { document_type: d.document_type || '', full_text: d.full_text || '', detected: d.detected || null };
     const normNotes = applyNormalization();
-    LAST_META = { document_type: d.document_type || '', full_text: d.full_text || '' };
     document.getElementById('rawText').textContent = d.full_text || '(no text detected)';
+    const det = d.detected;
     if (!d.document || !Object.keys(d.document).length) {
-      setStatus('OCR ran, but no structured fields were returned — the LLM may be unconfigured, rate-limited (429), or the image was unclear.', 'err');
+      setStatus(det
+        ? 'No document found' + (det.summary ? ': ' + det.summary : '.') + (det.is_document === false ? '' : ' The LLM returned no fields.')
+        : 'OCR ran, but no structured fields were returned — the LLM may be unconfigured, rate-limited (429), or the image was unclear.',
+        det ? '' : 'err');
     } else {
-      setStatus('Extracted ' + Object.keys(d.document).length + ' field(s).' + (normNotes.length ? (' Auto: ' + normNotes.join(', ') + '.') : ''), 'ok');
+      const what = det && (det.label || prettyType(det.document_type));
+      setStatus((what ? what + ' — ' : '') + Object.keys(d.document).length + ' field(s).'
+        + (normNotes.length ? (' Auto: ' + normNotes.join(', ') + '.') : ''), 'ok');
     }
     document.getElementById('copyBtn').style.display = Object.keys(DATA).length ? 'inline-block' : 'none';
     render();

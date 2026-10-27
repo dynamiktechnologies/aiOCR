@@ -51,6 +51,36 @@ OCR Text:
 Return ONLY valid JSON. If a field is not found, omit it."""
 
 
+# Auto-detect prompt: no caller-supplied fields, so the LLM first names the
+# document and then chooses the fields worth extracting. Braces in the JSON
+# sketch are literal — the prompt is filled with .replace(), not .format().
+AUTO_DETECT_PROMPT = """You are a document classifier and data extractor. The OCR text below came
+from ONE uploaded image or document. Decide what it is, then extract its salient fields.
+
+Return a single JSON object shaped exactly like this:
+{
+  "document_type": "passport | identity_card | driving_license | receipt | invoice | bank_statement | business_card | boarding_pass | letter | worksheet | not_a_document | unknown",
+  "label": "short human title, e.g. 'Cafe receipt' or 'Malaysian identity card'",
+  "category": "identity | financial | correspondence | reference | not_a_document | other",
+  "is_document": true,
+  "confidence": 0.0,
+  "summary": "one sentence describing what this is",
+  "fields": {"snake_case_name": "value as printed"}
+}
+
+Rules:
+- Judge only from the text. If it is not a document (a photo caption, product packaging, a sign, a logo, stray words), set is_document to false, document_type to "not_a_document", and still say in summary what it appears to be.
+- If the text is empty or unreadable, use document_type "unknown", is_document false and an empty fields object.
+- A passport is "passport", a national identity card is "identity_card", a driving licence is "driving_license"; never use one of these names for a different document.
+- confidence is a number from 0 to 1.
+- Put 3-15 useful fields under "fields": use the document's own labels in snake_case (merchant, total, tax, invoice_number, date, full_name, id_number, ...). Dates as YYYY-MM-DD, amounts as plain numbers.
+- Copy values as printed; omit what is absent rather than inventing it, and never emit null values.
+- Return ONLY the JSON object, with no prose and no code fences.
+
+OCR Text:
+{text}"""
+
+
 def _build_field_prompt(fields: list[str]) -> str:
     """Build a parser prompt that returns EXACTLY the requested field names.
 
@@ -90,6 +120,7 @@ def parse_document(
     base_url: Optional[str] = None,
     model: Optional[str] = None,
     fields: Optional[list] = None,
+    auto: bool = False,
 ) -> Optional[dict]:
     """
     Parse OCR text into structured fields using an LLM.
@@ -116,6 +147,10 @@ def parse_document(
         base_url: Base URL override for OpenAI-compatible endpoints.
         model: Model name override. Defaults to OCR_LLM_MODEL/OPENAI_MODEL env,
             then 'gpt-4o-mini'. OpenRouter ids are namespaced (e.g. 'openai/gpt-4o-mini').
+        fields: Exact field names to fill (ignored when ``auto`` is set).
+        auto: Classify the document and pick the fields automatically; the answer
+            includes document_type/label/category/is_document/confidence/summary
+            plus a ``fields`` object.
 
     Returns:
         Parsed dict of structured fields, or None if LLM not configured.
@@ -168,6 +203,8 @@ def parse_document(
         text = text[:head] + "\n[...truncated...]\n" + text[-tail:]
     if prompt:
         parse_prompt = prompt
+    elif auto:
+        parse_prompt = AUTO_DETECT_PROMPT
     elif fields:
         parse_prompt = _build_field_prompt(list(fields))
     else:
@@ -202,7 +239,7 @@ def parse_document(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a document parser. Return only valid JSON."},
-                {"role": "user", "content": parse_prompt.format(text=text)},
+                {"role": "user", "content": parse_prompt.replace("{text}", text)},
             ],
             temperature=0.1,
             max_tokens=max_tokens,
