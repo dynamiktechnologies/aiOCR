@@ -7,6 +7,11 @@ build/
 *.egg
 .env
 .venv/
+# Local-run caches (C: is nearly full; pip/model/temp data lives on E:)
+.pip_tmp/
+.pip_cache/
+.paddlex_cache/
+.tmp/
 venv/
 env/
 *.log
