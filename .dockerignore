@@ -1,0 +1,14 @@
+# Keep secrets, local state and dev artifacts out of the build context.
+.env
+auth.db
+auth.db-wal
+auth.db-shm
+*.sqlite3
+__pycache__/
+*.py[cod]
+.git/
+.gitignore
+.qoder/
+.venv/
+venv/
+*.log

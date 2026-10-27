@@ -8,11 +8,14 @@ Design:
 - Keys are issued/revoked through the ``/admin/keys`` endpoints, protected by
   a separate long-lived admin token supplied via the ``X-Admin-Token`` header
   and configured with the ``OCR_ADMIN_TOKEN`` environment variable.
-- No third-party dependencies: uses the stdlib ``sqlite3`` + ``secrets``.
+- No third-party dependencies for authentication: stdlib ``sqlite3`` + ``secrets``.
+  The optional per-client LLM credentials stored by the admin portal are
+  encrypted with ``cryptography`` (Fernet); see ``update_llm_config``.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import logging
@@ -26,6 +29,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
 from fastapi.security import APIKeyHeader
@@ -36,6 +40,7 @@ from .schemas import (
     APIKeyInfo,
     APIKeyList,
     APIKeyUpdateRequest,
+    LLMConfigUpdate,
     UsagePoint,
     UsageSummary,
     UsageReport,
@@ -43,6 +48,7 @@ from .schemas import (
     AdminSummary,
     LoginRequest,
     SignupRequest,
+    DemoLoginRequest,
     AuthUser,
     AdminPublic,
     ClientAccount,
@@ -56,6 +62,9 @@ logger = logging.getLogger(__name__)
 # --- Configuration (env-driven, with safe defaults) ------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.getenv("OCR_AUTH_DB", str(PROJECT_ROOT / "auth.db")))
+# Master-key file for the encrypted per-client LLM credentials. Used only when
+# OCR_SECRET_KEY is not set; kept next to the DB so backups keep both together.
+LLM_KEY_FILE = Path(os.getenv("OCR_LLM_KEY_FILE", str(DB_PATH.parent / "llm.key")))
 ADMIN_TOKEN = os.getenv("OCR_ADMIN_TOKEN", "").strip()
 BOOTSTRAP_API_KEY = os.getenv("OCR_BOOTSTRAP_API_KEY", "").strip()
 # Defaults applied to newly created keys when the admin does not set them.
@@ -70,6 +79,16 @@ DEFAULT_OVER_LIMIT_MODE = os.getenv("OCR_DEFAULT_OVER_LIMIT_MODE", "").strip()
 # Seed the first admin account on startup when the admins table is empty.
 ADMIN_EMAIL = os.getenv("OCR_ADMIN_EMAIL", "").strip().lower()
 ADMIN_PASSWORD = os.getenv("OCR_ADMIN_PASSWORD", "").strip()
+
+# Demo mode: exposes POST /auth/demo, which seeds/refreshes a fixed demo admin
+# and demo client account and logs you straight in. DISABLED BY DEFAULT -- only
+# turn it on (OCR_DEMO_MODE=true) for local demos, never on a public deployment.
+DEMO_MODE = os.getenv("OCR_DEMO_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+DEMO_ADMIN_EMAIL = os.getenv("OCR_DEMO_ADMIN_EMAIL", "admin@example.com").strip().lower()
+DEMO_ADMIN_PASSWORD = os.getenv("OCR_DEMO_ADMIN_PASSWORD", "change-me-please")
+DEMO_CLIENT_EMAIL = os.getenv("OCR_DEMO_CLIENT_EMAIL", "demo@client.com").strip().lower()
+DEMO_CLIENT_PASSWORD = os.getenv("OCR_DEMO_CLIENT_PASSWORD", "demo12345")
+DEMO_CLIENT_NAME = os.getenv("OCR_DEMO_CLIENT_NAME", "Demo Client")
 
 # Session cookies / tokens.
 SESSION_COOKIE = os.getenv("OCR_SESSION_COOKIE", "ocr_session").strip()
@@ -134,6 +153,7 @@ def _init_db() -> None:
             """
         )
         _ensure_quota_columns(conn)
+        _ensure_llm_columns(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS admins (
@@ -214,6 +234,20 @@ def _ensure_quota_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE api_keys ADD COLUMN {name} {sql_type}")
 
 
+def _ensure_llm_columns(conn: sqlite3.Connection) -> None:
+    """Add per-client LLM credential columns to an existing api_keys table."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(api_keys)").fetchall()}
+    for name, sql_type in (
+        ("llm_base_url", "TEXT"),
+        ("llm_model", "TEXT"),
+        ("llm_api_key_enc", "TEXT"),   # Fernet token, never the plaintext key
+        ("llm_key_hint", "TEXT"),      # last 4 chars, for display only
+        ("llm_updated_at", "TEXT"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE api_keys ADD COLUMN {name} {sql_type}")
+
+
 def _ensure_ocr_run_columns(conn: sqlite3.Connection) -> None:
     """Add newer columns to an existing ocr_runs table (idempotent)."""
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(ocr_runs)").fetchall()}
@@ -248,6 +282,10 @@ def _row_to_info(row: sqlite3.Row) -> APIKeyInfo:
         monthly_quota=(row["monthly_quota"] if "monthly_quota" in keys else None),
         rpm_limit=(row["rpm_limit"] if "rpm_limit" in keys else None),
         over_limit_mode=_norm_mode(row["over_limit_mode"] if "over_limit_mode" in keys else None),
+        llm_base_url=(row["llm_base_url"] if "llm_base_url" in keys else None),
+        llm_model=(row["llm_model"] if "llm_model" in keys else None),
+        llm_key_hint=(row["llm_key_hint"] if "llm_key_hint" in keys else None),
+        llm_updated_at=(row["llm_updated_at"] if "llm_updated_at" in keys else None),
     )
 
 
@@ -333,13 +371,224 @@ def list_api_keys() -> list[APIKeyInfo]:
     return [_row_to_info(r) for r in rows]
 
 
-def revoke_api_key(key_id: int) -> bool:
+# --- Per-client LLM credentials (admin-managed, encrypted at rest) --------
+_UNSET = object()
+_fernet_lock = threading.Lock()
+_fernet_cipher = None
+_fernet_failed = False
+
+
+def _fernet():
+    """Return the Fernet cipher used for stored client LLM keys, or None.
+
+    The master key comes from OCR_SECRET_KEY when set. Otherwise a random key
+    is generated once and kept next to the database (llm.key); that file is what
+    makes stored credentials decryptable, so it must be backed up with the DB
+    and never committed.
+    """
+    global _fernet_cipher, _fernet_failed
+    if _fernet_cipher is not None:
+        return _fernet_cipher
+    if _fernet_failed:
+        return None
+    with _fernet_lock:
+        if _fernet_cipher is not None:
+            return _fernet_cipher
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError:
+            logger.error(
+                "cryptography is not installed, so per-client LLM keys cannot be stored "
+                "(pip install cryptography)."
+            )
+            _fernet_failed = True
+            return None
+        secret = os.getenv("OCR_SECRET_KEY", "").strip()
+        if secret:
+            key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
+        else:
+            try:
+                if LLM_KEY_FILE.exists():
+                    key = LLM_KEY_FILE.read_bytes().strip()
+                else:
+                    LLM_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    key = Fernet.generate_key()
+                    LLM_KEY_FILE.write_bytes(key)
+                    try:
+                        LLM_KEY_FILE.chmod(0o600)
+                    except OSError:
+                        pass
+                    logger.warning(
+                        "No OCR_SECRET_KEY set; generated %s to encrypt stored client "
+                        "LLM keys. Back it up with the database.", LLM_KEY_FILE,
+                    )
+            except OSError as e:
+                logger.error("Cannot read or create %s: %s", LLM_KEY_FILE, e)
+                _fernet_failed = True
+                return None
+        try:
+            _fernet_cipher = Fernet(key)
+        except Exception as e:  # malformed key file / foreign key material
+            logger.error("Invalid LLM credential key (%s): %s", LLM_KEY_FILE, e)
+            _fernet_failed = True
+            return None
+        return _fernet_cipher
+
+
+def _clean_base_url(value: Optional[str]) -> Optional[str]:
+    """Validate an admin-supplied LLM endpoint. None or blank clears it."""
+    url = (value or "").strip()
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(
+            status_code=400,
+            detail="LLM base URL must be an http(s) URL, e.g. https://openrouter.ai/api/v1",
+        )
+    return url.rstrip("/")
+
+
+def update_llm_config(
+    key_id: int,
+    base_url=_UNSET,
+    model=_UNSET,
+    api_key=_UNSET,
+) -> Optional[APIKeyInfo]:
+    """Set or clear a client's own LLM endpoint/model/key.
+
+    Only the arguments actually passed are written, so omitted fields keep their
+    value. The API key is encrypted before it reaches the database and only its
+    last four characters are stored in the clear, for display.
+    """
+    cols: dict = {}
+    if base_url is not _UNSET:
+        cols["llm_base_url"] = _clean_base_url(base_url)
+    if model is not _UNSET:
+        cols["llm_model"] = (model or "").strip() or None
+    if api_key is not _UNSET:
+        raw_key = (api_key or "").strip()
+        if raw_key:
+            cipher = _fernet()
+            if cipher is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Server cannot encrypt client LLM keys: install the 'cryptography' package and retry.",
+                )
+            cols["llm_api_key_enc"] = cipher.encrypt(raw_key.encode("utf-8")).decode("ascii")
+            cols["llm_key_hint"] = raw_key[-4:]
+        else:
+            cols["llm_api_key_enc"] = None
+            cols["llm_key_hint"] = None
+    if not cols:
+        return get_api_key(key_id)
+    cols["llm_updated_at"] = _now()
+    assignments = ", ".join(f"{name} = ?" for name in cols)
     with _conn() as conn:
         cur = conn.execute(
-            "UPDATE api_keys SET is_active = 0 WHERE id = ? AND is_active = 1",
+            f"UPDATE api_keys SET {assignments} WHERE id = ?", [*cols.values(), key_id]
+        )
+        if cur.rowcount == 0:
+            return None
+    logger.info("Updated LLM settings for key id=%s (fields=%s)", key_id, sorted(cols))
+    return get_api_key(key_id)
+
+
+def get_llm_override(key_id: int) -> Optional[dict]:
+    """Decrypted per-client LLM settings to pass to ``parse_document``.
+
+    Returns a subset of {api_key, base_url, model}, or None when the client
+    should use the server-wide OCR_LLM_* configuration. Values are never logged.
+    """
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT llm_base_url, llm_model, llm_api_key_enc FROM api_keys WHERE id = ?",
+            (key_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    base_url, model, enc = row["llm_base_url"], row["llm_model"], row["llm_api_key_enc"]
+    if not (base_url or model or enc):
+        return None
+    api_key = None
+    if enc:
+        cipher = _fernet()
+        if cipher is None:
+            logger.error("Cannot decrypt the stored LLM key for key id=%s (encryption unavailable).", key_id)
+            return None
+        try:
+            api_key = cipher.decrypt(enc.encode("ascii")).decode("utf-8")
+        except Exception as e:
+            logger.error("Cannot decrypt the stored LLM key for key id=%s: %s", key_id, e)
+            return None
+    override: dict = {}
+    if base_url:
+        override["base_url"] = base_url
+    if model:
+        override["model"] = model
+    if api_key:
+        override["api_key"] = api_key
+    return override or None
+
+
+def revoke_api_key(key_id: int) -> bool:
+    with _conn() as conn:
+        # Drop the encrypted LLM credential too: a revoked client must not leave a
+        # billable provider key behind in the database.
+        cur = conn.execute(
+            "UPDATE api_keys SET is_active = 0, llm_api_key_enc = NULL, llm_key_hint = NULL "
+            "WHERE id = ? AND is_active = 1",
             (key_id,),
         )
         return cur.rowcount > 0
+
+
+def rotate_api_key(key_id: int) -> Optional[tuple[str, APIKeyInfo]]:
+    """Replace a key with a fresh one and revoke the old key.
+
+    The raw replacement is returned only here, exactly like create_api_key, so
+    this is the supported answer to "the client lost their key" - only hashes
+    are stored, so the original cannot be re-displayed.
+
+    Carried over: name, plan, quota, rate limit, over-limit mode and the
+    per-client LLM credentials (revoking would wipe those). Usage rows
+    (usage_daily), OCR history (ocr_runs) and any client account bound to the key
+    are re-pointed at the new row, so a rotation neither resets this month's
+    quota nor hides past runs. The old key stops working immediately.
+
+    Returns (raw_key, new_record), or None when the key is unknown/revoked.
+    """
+    raw = generate_api_key()
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM api_keys WHERE id = ?", (key_id,)).fetchone()
+        if row is None or not row["is_active"]:
+            return None
+        cur = conn.execute(
+            "INSERT INTO api_keys (key_hash, key_prefix, name, created_at, last_used_at, "
+            "request_count, plan, monthly_quota, rpm_limit, over_limit_mode, "
+            "llm_base_url, llm_model, llm_api_key_enc, llm_key_hint, llm_updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                _hash(raw), raw[:_KEY_PREFIX_LEN], row["name"], _now(),
+                row["last_used_at"], row["request_count"], row["plan"],
+                row["monthly_quota"], row["rpm_limit"],
+                _norm_mode(row["over_limit_mode"]), row["llm_base_url"],
+                row["llm_model"], row["llm_api_key_enc"], row["llm_key_hint"],
+                row["llm_updated_at"],
+            ),
+        )
+        new_id = cur.lastrowid
+        conn.execute("UPDATE usage_daily SET key_id = ? WHERE key_id = ?", (new_id, key_id))
+        conn.execute("UPDATE ocr_runs SET key_id = ? WHERE key_id = ?", (new_id, key_id))
+        conn.execute("UPDATE clients SET key_id = ? WHERE key_id = ?", (new_id, key_id))
+        conn.execute(
+            "UPDATE api_keys SET is_active = 0, llm_api_key_enc = NULL, llm_key_hint = NULL "
+            "WHERE id = ?",
+            (key_id,),
+        )
+        new_row = conn.execute("SELECT * FROM api_keys WHERE id = ?", (new_id,)).fetchone()
+    logger.info("Rotated API key id=%s -> id=%s name=%r", key_id, new_id, row["name"])
+    return raw, _row_to_info(new_row)
 
 
 def verify_api_key(raw_key: str) -> Optional[APIKeyInfo]:
@@ -482,6 +731,7 @@ def get_usage_summary(key_id: int) -> UsageSummary:
         ).fetchone()
         row = conn.execute(
             "SELECT "
+            "COALESCE(SUM(count), 0) AS total, "
             "COALESCE(SUM(CASE WHEN day = ? THEN count END), 0) AS today, "
             "COALESCE(SUM(CASE WHEN day LIKE ? THEN count END), 0) AS month "
             "FROM usage_daily WHERE key_id = ?",
@@ -498,7 +748,10 @@ def get_usage_summary(key_id: int) -> UsageSummary:
     used_month = row["month"]
     remaining = (quota - used_month) if quota else None
     return UsageSummary(
-        total_requests=info["request_count"],
+        # Billable OCR requests only: api_keys.request_count also counts
+        # plain authenticated calls (dashboard polling), which would inflate
+        # this stat every time the portal refreshes.
+        total_requests=row["total"],
         requests_today=row["today"],
         requests_this_month=used_month,
         last_used_at=info["last_used_at"],
@@ -533,7 +786,7 @@ def get_admin_summary() -> AdminSummary:
             "SELECT COUNT(*), COALESCE(SUM(is_active), 0) FROM api_keys"
         ).fetchone()
         req_total = conn.execute(
-            "SELECT COALESCE(SUM(request_count), 0) FROM api_keys"
+            "SELECT COALESCE(SUM(count), 0) FROM usage_daily"
         ).fetchone()[0]
         req_today = conn.execute(
             "SELECT COALESCE(SUM(count), 0) FROM usage_daily WHERE day = ?",
@@ -806,6 +1059,63 @@ def count_admins_exists() -> bool:
         return conn.execute("SELECT 1 FROM admins LIMIT 1").fetchone() is not None
 
 
+# --- Demo-mode account helpers --------------------------------------------
+def _admin_row_by_email(email: str) -> Optional[sqlite3.Row]:
+    with _conn() as conn:
+        return conn.execute("SELECT * FROM admins WHERE email = ?", (email,)).fetchone()
+
+
+def _client_row_by_email(email: str) -> Optional[sqlite3.Row]:
+    with _conn() as conn:
+        return conn.execute("SELECT * FROM clients WHERE email = ?", (email,)).fetchone()
+
+
+def _reset_admin_password(admin_id: int, password: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE admins SET pw_hash = ?, is_active = 1 WHERE id = ?",
+            (_hash_password(password), admin_id),
+        )
+
+
+def _reset_client_password(client_id: int, password: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE clients SET pw_hash = ?, is_active = 1 WHERE id = ?",
+            (_hash_password(password), client_id),
+        )
+
+
+def ensure_demo_admin() -> AdminPublic:
+    """Return the fixed demo admin, creating it if absent and resetting its
+    password + active flag so the demo login always succeeds."""
+    row = _admin_row_by_email(DEMO_ADMIN_EMAIL)
+    if row is None:
+        admin = create_admin(DEMO_ADMIN_EMAIL, DEMO_ADMIN_PASSWORD, "Demo Administrator")
+        if admin is None:  # race/duplicate
+            row = _admin_row_by_email(DEMO_ADMIN_EMAIL)
+            admin = _admin_public(row)
+        return admin
+    _reset_admin_password(row["id"], DEMO_ADMIN_PASSWORD)
+    return _admin_public(row)
+
+
+def ensure_demo_client() -> ClientAccount:
+    """Return the fixed demo client (with its own API key), creating it if
+    absent and resetting its password + active flag for a reliable demo login."""
+    row = _client_row_by_email(DEMO_CLIENT_EMAIL)
+    if row is None:
+        _raw, key_info = create_api_key(DEMO_CLIENT_NAME, plan="demo")
+        account = create_client(DEMO_CLIENT_EMAIL, DEMO_CLIENT_PASSWORD, DEMO_CLIENT_NAME, key_info.id)
+        if account is None:  # duplicate email created concurrently
+            row = _client_row_by_email(DEMO_CLIENT_EMAIL)
+            account = _client_account(row)
+            revoke_api_key(key_info.id)  # don't leak the orphan key
+        return account
+    _reset_client_password(row["id"], DEMO_CLIENT_PASSWORD)
+    return _client_account(row)
+
+
 # --- FastAPI dependencies --------------------------------------------------
 async def require_api_key(
     x_api_key: Optional[str] = Security(_api_key_header),
@@ -977,6 +1287,27 @@ async def admin_list_keys() -> APIKeyList:
     return APIKeyList(keys=list_api_keys())
 
 
+@router.put("/keys/{key_id}/llm", response_model=APIKeyInfo, summary="Set a client's own LLM credentials")
+async def admin_set_llm(key_id: int, body: LLMConfigUpdate) -> APIKeyInfo:
+    """Store a per-client LLM endpoint/model/key used when that client asks for
+    ``parse_doc``. The API key is write-only: responses only carry its last four
+    characters. Omitted fields are left unchanged, null reverts to the server
+    default (OCR_LLM_*), and an empty api_key clears the stored secret."""
+    info = update_llm_config(key_id, **body.model_dump(exclude_unset=True))
+    if info is None:
+        raise HTTPException(status_code=404, detail="Key not found.")
+    return info
+
+
+@router.delete("/keys/{key_id}/llm", response_model=APIKeyInfo, summary="Clear a client's LLM credentials")
+async def admin_clear_llm(key_id: int) -> APIKeyInfo:
+    """Drop every per-client LLM override, so the client uses the server defaults."""
+    info = update_llm_config(key_id, base_url=None, model=None, api_key="")
+    if info is None:
+        raise HTTPException(status_code=404, detail="Key not found.")
+    return info
+
+
 @router.get("/clients", response_model=list[ClientProfile], summary="All clients with usage")
 async def admin_clients() -> list[ClientProfile]:
     """Full client list with per-client usage/quota, for the admin dashboard table."""
@@ -993,10 +1324,31 @@ async def admin_clients() -> list[ClientProfile]:
                 monthly_quota=info.monthly_quota,
                 rpm_limit=info.rpm_limit,
                 over_limit_mode=info.over_limit_mode,
+                llm_base_url=info.llm_base_url,
+                llm_model=info.llm_model,
+                llm_key_hint=info.llm_key_hint,
+                llm_updated_at=info.llm_updated_at,
                 usage=get_usage_summary(info.id),
             )
         )
     return result
+
+
+@router.post("/keys/{key_id}/rotate", response_model=APIKeyCreated, summary="Rotate a client's API key")
+async def admin_rotate_key(key_id: int) -> APIKeyCreated:
+    """Issue a replacement key and revoke the old one (use when a key is lost).
+
+    Only hashes are stored, so a lost key cannot be displayed again; rotating is
+    the supported way to hand a client a working credential. Plan, quota, rate
+    limit and the client's LLM settings carry over, usage and OCR history stay
+    with the client, and the old key stops working immediately. The new key is
+    returned only in this response.
+    """
+    result = rotate_api_key(key_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Key not found or already revoked.")
+    raw, info = result
+    return APIKeyCreated(key=raw, **info.model_dump())
 
 
 @router.delete("/keys/{key_id}", response_model=APIKeyInfo, summary="Revoke an API key")
@@ -1156,6 +1508,30 @@ async def unified_login(body: LoginRequest, response: Response) -> AuthUser:
         _set_session_cookie(response, token, CLIENT_SESSION_TTL_SECONDS)
         return AuthUser(type="client", id=account.id, email=account.email, name=account.name)
     raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+
+@auth_router.post("/demo", response_model=AuthUser, summary="One-click demo login (OCR_DEMO_MODE only)")
+async def demo_login(body: DemoLoginRequest, response: Response) -> AuthUser:
+    """Seed/refresh a fixed demo account and sign it in immediately.
+
+    Guarded by ``OCR_DEMO_MODE``; returns 404 when demo mode is off so the
+    route is effectively invisible in production. Sets the same session cookie
+    as the normal login, so downstream role enforcement is unchanged.
+    """
+    if not DEMO_MODE:
+        raise HTTPException(status_code=404, detail="Demo mode is disabled.")
+    role = (body.role or "client").strip().lower()
+    if role == "admin":
+        admin = ensure_demo_admin()
+        touch_admin_login(admin.id)
+        token = create_session("admin", admin.id, ADMIN_SESSION_TTL_SECONDS)
+        _set_session_cookie(response, token, ADMIN_SESSION_TTL_SECONDS)
+        return AuthUser(type="admin", id=admin.id, email=admin.email, name=admin.name, is_admin=True)
+    account = ensure_demo_client()
+    touch_client_login(account.id)
+    token = create_session("client", account.id, CLIENT_SESSION_TTL_SECONDS)
+    _set_session_cookie(response, token, CLIENT_SESSION_TTL_SECONDS)
+    return AuthUser(type="client", id=account.id, email=account.email, name=account.name)
 
 
 @auth_router.post("/client/login", response_model=AuthUser, summary="Client portal login")

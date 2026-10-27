@@ -75,6 +75,27 @@ class APIKeyUpdateRequest(BaseModel):
     over_limit_mode: Optional[str] = Field(default=None, description="'hard' | 'soft'")
 
 
+class LLMConfigUpdate(BaseModel):
+    """Admin-supplied LLM credentials for one client key.
+
+    Omitted fields are left unchanged. ``base_url``/``model`` set to null revert
+    to the server default (OCR_LLM_*), and an empty ``api_key`` clears the
+    stored secret. The key itself is never returned by any endpoint.
+    """
+    base_url: Optional[str] = Field(
+        default=None, max_length=500,
+        description="OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1. Null = server default.",
+    )
+    model: Optional[str] = Field(
+        default=None, max_length=120,
+        description="Model id for this client. Null = server default.",
+    )
+    api_key: Optional[str] = Field(
+        default=None, max_length=400,
+        description="Provider API key (stored encrypted, shown only as a 4-char hint). Empty string clears it.",
+    )
+
+
 class APIKeyInfo(BaseModel):
     """Public (non-secret) representation of an API key."""
     id: int
@@ -88,6 +109,10 @@ class APIKeyInfo(BaseModel):
     monthly_quota: Optional[int] = None
     rpm_limit: Optional[int] = None
     over_limit_mode: str = "hard"
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    llm_key_hint: Optional[str] = None
+    llm_updated_at: Optional[str] = None
 
 
 class APIKeyCreated(APIKeyInfo):
@@ -132,6 +157,10 @@ class ClientProfile(BaseModel):
     monthly_quota: Optional[int] = None
     rpm_limit: Optional[int] = None
     over_limit_mode: str = "hard"
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    llm_key_hint: Optional[str] = None
+    llm_updated_at: Optional[str] = None
     usage: UsageSummary
 
 
@@ -185,6 +214,11 @@ class SignupRequest(BaseModel):
     email: str = Field(..., description="Email used to log in", max_length=200)
     password: str = Field(..., description="At least 8 characters", min_length=8, max_length=200)
     name: str = Field(..., description="Company / contact name", min_length=1, max_length=120)
+
+
+class DemoLoginRequest(BaseModel):
+    """Demo shortcut login (only active when OCR_DEMO_MODE=true)."""
+    role: str = Field(default="client", description="'admin' or 'client'")
 
 
 class AuthUser(BaseModel):

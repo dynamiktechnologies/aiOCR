@@ -7,7 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/theme.css">
+<script src="/static/theme.js?v=3"></script>
+<link rel="stylesheet" href="/static/theme.css?v=3">
 <style>
   /* Page-local: centered login + role reveal */
   .loginwrap { min-height: calc(100vh - 60px); display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -23,12 +24,37 @@
   .rolepill.client { background: hsl(var(--secondary-h)/.15); color: var(--secondary); border: 1px solid hsl(var(--secondary-h)/.4); }
   .rolepill { padding: 2px 10px; border-radius: 99px; font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: .06em; }
   /* Client dashboard tabs */
-  .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--border); }
   .tabs .tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--font-mono); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 10px 16px; cursor: pointer; transition: color .15s, border-color .15s; }
   .tabs .tab:hover { color: var(--text); }
   .tabs .tab.on { color: var(--text); border-bottom-color: var(--accent); }
   .tabpane { display: grid; gap: 20px; }
   .tabpane.hidden { display: none; }
+  /* Sample use case: the standalone /demo page, embedded */
+  .pane-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .pane-head h2 { margin-bottom: 0; }
+  .demo-frame { display: block; width: 100%; height: clamp(560px, 78vh, 980px); margin-top: 16px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+  .demo-chip { font-size: .8rem; padding: 8px 10px; }
+  /* Themed dialog — replaces native confirm()/alert() for key actions */
+  .modal-wrap { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px;
+    background: var(--scrim); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .modal-wrap.hidden { display: none; }
+  .modal { width: min(440px, 100%); background: var(--surface); border: 1px solid var(--glass-border);
+    border-radius: var(--radius); padding: 24px;
+    box-shadow: var(--glow-lg), var(--overlay-shadow);
+    animation: modal-in .16s ease-out; }
+  @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+  .modal .eyebrow { font-family: var(--font-mono); font-size: .66rem; text-transform: uppercase; letter-spacing: .16em; color: var(--accent); margin-bottom: 10px; }
+  .modal .eyebrow:empty { display: none; }
+  .modal h3 { font-size: 1.12rem; font-weight: 700; margin-bottom: 10px; }
+  .modal .body { color: var(--muted); font-size: .9rem; line-height: 1.55; }
+  .modal .body strong { color: var(--text); }
+  .modal .body .mono { font-family: var(--font-mono); font-size: .84rem; color: var(--text); }
+  .modal .facts { margin-top: 14px; padding-top: 4px; border-top: 1px solid var(--border); }
+  .modal .facts .kv { border-bottom: none; padding: 5px 0; font-size: .84rem; }
+  .modal .btn.hidden { display: none; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
 </style>
 </head>
 <body>
@@ -40,6 +66,7 @@
         <span class="rolepill" id="rolePill"></span>
       </span>
       <a href="/docs">API Docs</a>
+      <button class="theme-toggle" id="themeBtn" type="button">Light mode</button>
       <a href="#" id="navSignout" class="hidden">Sign out</a>
     </div>
   </nav>
@@ -69,6 +96,15 @@
       <div style="margin-top: 16px; display:flex; gap:10px;">
         <button class="btn" id="submitBtn" style="flex:1;">Sign in</button>
       </div>
+
+      <div style="margin-top:14px;">
+        <div class="muted" style="font-family:var(--font-mono); font-size:.66rem; text-transform:uppercase; letter-spacing:.12em; margin-bottom:8px;">Quick demo login</div>
+        <div style="display:flex; gap:10px;">
+          <button class="btn btn-ghost demo-chip" id="demoAdmin" style="flex:1;">🛡 Demo as Admin</button>
+          <button class="btn btn-ghost demo-chip" id="demoClient" style="flex:1;">👤 Demo as Client</button>
+        </div>
+      </div>
+
       <p class="muted" id="loginMsg" style="margin-top:12px;">Admins and clients sign in here — you'll see the right dashboard for your role.</p>
     </div>
   </div>
@@ -80,6 +116,7 @@
     <div class="tabs" id="clientTabs">
       <button class="tab on" data-tab="dash">Dashboard</button>
       <button class="tab" data-tab="ocr">OCR</button>
+      <button class="tab" data-tab="demo">Sample use case</button>
       <button class="tab" data-tab="account">Account</button>
     </div>
 
@@ -149,6 +186,23 @@
       </div>
     </div>
 
+    <!-- Sample use case: the standalone passport / ID demo, embedded so a
+         client can try the flow with their own key or portal session -->
+    <div class="tabpane hidden" id="paneDemo">
+      <div class="card">
+        <div class="pane-head">
+          <h2>Sample use case</h2>
+          <a class="btn btn-ghost btn-sm" href="/demo" target="_blank" rel="noopener">Open full page</a>
+        </div>
+        <p class="muted" style="margin-top:10px;">
+          A passport / identity-card form filled straight from OCR. Upload an image and the extracted values land in the
+          fields below — no key needed while you're signed in, and edits to the field list are sent to the LLM prompt.
+        </p>
+        <iframe class="demo-frame" id="demoFrame" title="Sample use case: passport and ID card OCR"
+                loading="lazy" data-src="/demo?embed=1"></iframe>
+      </div>
+    </div>
+
     <!-- Account information -->
     <div class="tabpane hidden" id="paneAccount">
       <div class="card">
@@ -203,7 +257,7 @@
           <tbody id="rows"></tbody>
         </table>
       </div>
-      <p class="muted" style="margin-top:12px;">Revoking deactivates a key immediately and cannot be undone. Use "Limits" to change plan, quota, rate limit, or over-quota mode. Highlighted rows are over quota (soft-cap, still served).</p>
+      <p class="muted" style="margin-top:12px;">Revoking deactivates a key immediately and cannot be undone. <strong>Rotate</strong> issues a replacement with the same plan, quota and LLM settings and revokes the old key — use it when a client lost their key, since only hashes are stored and the original can never be shown again. Use "Limits" to change plan, quota, rate limit, or over-quota mode, and "LLM" to give a client its own LLM endpoint/model/key (encrypted, write-only). Highlighted rows are over quota (soft-cap, still served).</p>
     </div>
 
     <div class="card">
@@ -223,6 +277,19 @@
     </div>
   </div>
 
+  <!-- ===== Themed dialog (confirm / notice) ===== -->
+  <div class="modal-wrap hidden" id="modalWrap" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <div class="eyebrow" id="modalEyebrow"></div>
+      <h3 id="modalTitle"></h3>
+      <div class="body" id="modalBody"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="modalCancel">Cancel</button>
+        <button class="btn" id="modalOk">Confirm</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 const API = window.location.origin;
 const LANGS = ['en','ch','chinese_cht','japan','korean','fr','de','es','pt','ru','ar','hi','it','pl','nl','tr','vi','th','ms','id','tl','sw'];
@@ -232,6 +299,49 @@ let CURRENT = null;      // AuthUser
 const H = () => ({ 'Content-Type': 'application/json' });
 async function apiFetch(url, opts={}) { return fetch(url, { credentials: 'same-origin', ...opts }); }
 function esc(s){ const d=document.createElement('div'); d.textContent=s==null?'':String(s); return d.innerHTML; }
+
+// Themed replacement for confirm()/alert(): resolves true when the primary
+// button is chosen. Bodies may contain HTML, so always esc() API-sourced text.
+function openModal({ eyebrow='', title, body='', okText='Confirm', cancelText='Cancel', danger=false }){
+  const wrap = document.getElementById('modalWrap');
+  const okBtn = document.getElementById('modalOk');
+  const cancelBtn = document.getElementById('modalCancel');
+  document.getElementById('modalEyebrow').textContent = eyebrow;
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').innerHTML = body;
+  okBtn.textContent = okText;
+  okBtn.className = 'btn' + (danger ? ' btn-danger' : '');
+  cancelBtn.textContent = cancelText || 'Close';
+  cancelBtn.classList.toggle('hidden', !cancelText);
+  wrap.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  okBtn.focus();
+
+  return new Promise(resolve => {
+    const close = (result) => {
+      wrap.classList.add('hidden');
+      document.body.style.overflow = '';
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      wrap.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk = () => close(true);
+    const onCancel = () => close(false);
+    const onBackdrop = (e) => { if (e.target === wrap) close(false); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(false); } };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    wrap.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+// One-button variant for errors and short messages.
+function notice(message, title='Notice'){
+  return openModal({ eyebrow: 'Notice', title, body: `<p>${esc(message)}</p>`, okText: 'Close', cancelText: null });
+}
 
 document.getElementById('lang').innerHTML = LANGS.map(l => `<option value="${l}">${l}</option>`).join('');
 const fileInput = document.getElementById('file');
@@ -319,6 +429,27 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
 });
 document.getElementById('pwInput').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('submitBtn').click(); });
 
+async function demoLogin(role) {
+  setMode('login');
+  setLoginMsg(`Signing in as ${role}…`);
+  try {
+    const r = await apiFetch(`${API}/auth/demo`, { method:'POST', headers: H(), body: JSON.stringify({ role }) });
+    if (!r.ok) {
+      const e = await r.json().catch(()=>({}));
+      const msg = e.detail || 'Demo login failed.';
+      setLoginMsg(r.status === 404 ? 'Demo mode is off \u2014 start the server with OCR_DEMO_MODE=true to enable these buttons.' : msg, true);
+      return;
+    }
+    CURRENT = await r.json();
+    document.getElementById('pwInput').value = '';
+    enterRole(CURRENT.type);
+  } catch (err) {
+    setLoginMsg('Demo login failed: network error.', true);
+  }
+}
+document.getElementById('demoAdmin').addEventListener('click', () => demoLogin('admin'));
+document.getElementById('demoClient').addEventListener('click', () => demoLogin('client'));
+
 async function signOut() { await apiFetch(`${API}/auth/logout`, { method:'POST' }); CURRENT=null; ROLE=null; showLogin(); }
 document.getElementById('navSignout').addEventListener('click', e => { e.preventDefault(); signOut(); });
 
@@ -369,14 +500,28 @@ function drawChart(series) {
   ).join('');
 }
 
-// Client dashboard tabs: Dashboard | OCR | Account
+// Client dashboard tabs: Dashboard | OCR | Sample use case | Account
 function switchTab(name) {
   document.querySelectorAll('#clientTabs .tab').forEach(t => t.classList.toggle('on', t.dataset.tab === name));
   document.getElementById('paneDash').classList.toggle('hidden', name !== 'dash');
   document.getElementById('paneOcr').classList.toggle('hidden', name !== 'ocr');
+  document.getElementById('paneDemo').classList.toggle('hidden', name !== 'demo');
   document.getElementById('paneAccount').classList.toggle('hidden', name !== 'account');
+  // The frame is only fetched the first time the tab is opened.
+  if (name === 'demo') {
+    const frame = document.getElementById('demoFrame');
+    if (frame && !frame.getAttribute('src')) frame.setAttribute('src', frame.dataset.src);
+  }
 }
 document.querySelectorAll('#clientTabs .tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+// The embedded sample reports its own height so the frame grows with the form
+// instead of trapping a second scrollbar inside the card.
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || !e.data || !e.data.ocrDemoHeight) return;
+  const frame = document.getElementById('demoFrame');
+  if (frame) frame.style.height = Math.min(Math.max(e.data.ocrDemoHeight, 480), 2600) + 'px';
+});
 
 async function loadHistory() {
   const tb = document.getElementById('histRows');
@@ -403,7 +548,7 @@ document.getElementById('optParse').addEventListener('change', e => {
 });
 
 document.getElementById('runBtn').addEventListener('click', async () => {
-  if (!fileInput.files[0]) { alert('Choose a file first.'); return; }
+  if (!fileInput.files[0]) { await notice('Choose a file first.', 'No file selected'); return; }
   const runBtn = document.getElementById('runBtn');
   const meta = document.getElementById('resMeta');
   const wantParse = document.getElementById('optParse').checked;
@@ -497,22 +642,27 @@ function renderRows(clients){
     const overQ = c.monthly_quota && used >= c.monthly_quota && c.over_limit_mode === 'soft';
     if (overQ) tr.className = 'over-q';
     const modeCls = c.over_limit_mode === 'soft' ? 'mode-soft' : 'mode-hard';
+    const hasLlm = !!(c.llm_key_hint || c.llm_base_url || c.llm_model);
     tr.innerHTML = `<td>#${c.id}</td>`
-      + `<td>${esc(c.name)}${c.plan ? `<span class="plan-badge">${esc(c.plan)}</span>` : ''}<span class="mode-badge ${modeCls}">${c.over_limit_mode === 'soft' ? 'soft' : 'hard'}</span></td>`
+      + `<td>${esc(c.name)}${c.plan ? `<span class="plan-badge">${esc(c.plan)}</span>` : ''}<span class="mode-badge ${modeCls}">${c.over_limit_mode === 'soft' ? 'soft' : 'hard'}</span>${hasLlm ? `<span class="plan-badge" title="Client-specific LLM credentials">llm</span>` : ''}</td>`
       + `<td class="mono">${esc(c.key_prefix)}…</td>`
       + `<td>${c.is_active ? '<span class="pill on">Active</span>' : '<span class="pill off">Revoked</span>'}</td>`
       + monthCell(c)
       + `<td>${(c.usage && c.usage.total_requests) || 0}</td><td>${last}</td>`
       + `<td><div class="spark" id="spark-${c.id}">…</div></td>`
       + `<td style="text-align:right; white-space:nowrap;">`
+      + `<button class="btn btn-ghost btn-sm" data-llm="${c.id}">LLM</button>`
       + `<button class="btn btn-ghost btn-sm" data-limits="${c.id}">Limits</button>`
+      + (c.is_active ? ` <button class="btn btn-ghost btn-sm" data-rotate="${c.id}">Rotate</button>` : '')
       + (c.is_active ? ` <button class="btn btn-danger btn-sm" data-revoke="${c.id}">Revoke</button>` : '')
       + `</td>`;
     tb.appendChild(tr);
     loadSpark(c.id);
   });
   tb.querySelectorAll('[data-revoke]').forEach(b => b.addEventListener('click', () => revoke(b.dataset.revoke)));
+  tb.querySelectorAll('[data-rotate]').forEach(b => b.addEventListener('click', () => rotateKey(b.dataset.rotate)));
   tb.querySelectorAll('[data-limits]').forEach(b => b.addEventListener('click', () => editLimits(b.dataset.limits)));
+  tb.querySelectorAll('[data-llm]').forEach(b => b.addEventListener('click', () => editLlm(b.dataset.llm)));
 }
 
 async function loadSpark(id){
@@ -524,9 +674,86 @@ async function loadSpark(id){
 }
 
 async function revoke(id){
-  if (!confirm('Revoke this client key? They will lose API access immediately.')) return;
+  const c = (window.__clients || []).find(x => x.id == id);
+  const who = c ? c.name : `#${id}`;
+  const ok = await openModal({
+    eyebrow: 'Revoke API key',
+    title: `Revoke the key for “${who}”?`,
+    body: `<p><span class="mono">${esc(c ? c.key_prefix : '')}…</span> is deactivated immediately and cannot be restored, and any stored LLM credential is wiped. Use <strong>Rotate</strong> instead to replace a lost key.</p>`,
+    okText: 'Revoke key',
+    danger: true,
+  });
+  if (!ok) return;
   const r = await apiFetch(`${API}/admin/keys/${id}`, { method:'DELETE', headers: H() });
-  if (r.ok) loadAll(); else alert('Failed to revoke.');
+  if (r.ok) loadAll();
+  else {
+    const e = await r.json().catch(()=>({}));
+    await notice(e.detail || 'Failed to revoke the key.', 'Revoke failed');
+  }
+}
+
+async function rotateKey(id){
+  const c = (window.__clients || []).find(x => x.id == id);
+  const who = c ? c.name : `#${id}`;
+  const facts = c ? [
+    ['Plan', c.plan ? esc(c.plan) : 'default'],
+    ['Monthly quota', c.monthly_quota != null ? `${c.monthly_quota} / month` : 'unlimited'],
+    ['Rate limit', c.rpm_limit != null ? `${c.rpm_limit} / minute` : 'unlimited'],
+    ['Over quota', c.over_limit_mode === 'soft' ? 'soft — serve + flag' : 'hard — block'],
+    ['LLM credentials', (c.llm_key_hint || c.llm_base_url || c.llm_model) ? 'kept' : 'server default'],
+    ['Usage & history', 'stay with the client'],
+  ].map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span>${v}</span></div>`).join('') : '';
+  const ok = await openModal({
+    eyebrow: 'Rotate API key',
+    title: `Replace the key for “${who}”?`,
+    body: `<p><span class="mono">${esc(c ? c.key_prefix : '')}…</span> stops working immediately. The replacement is shown once and inherits:</p>`
+      + (facts ? `<div class="facts">${facts}</div>` : ''),
+    okText: 'Rotate key',
+    danger: true,
+  });
+  if (!ok) return;
+  const r = await apiFetch(`${API}/admin/keys/${id}/rotate`, { method:'POST', headers: H() });
+  if (!r.ok) {
+    const e = await r.json().catch(()=>({}));
+    await notice(e.detail || 'Failed to rotate the key.', 'Rotation failed');
+    return;
+  }
+  const d = await r.json();
+  showNewKey(who, d.key, 'The previous key is revoked.');
+  loadAll();
+}
+
+function showNewKey(name, key, note){
+  const box = document.getElementById('adminKeyBox');
+  box.classList.remove('hidden');
+  box.innerHTML = `<strong>${esc(name)}</strong> — new API key:<br><span class="mono">${esc(key)}</span>`
+    + `<div class="warn">⚠ Copy it now — it is shown only once and cannot be retrieved later. ${esc(note || '')}</div>`
+    + ` <button class="btn btn-ghost btn-sm" id="copyKeyBtn">Copy</button>`;
+  document.getElementById('copyKeyBtn').addEventListener('click', () => copyText(key, 'copyKeyBtn'));
+  box.scrollIntoView({ block:'nearest' });
+}
+
+async function copyText(text, btnId){
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { ok = false; }
+  if (!ok) {
+    // navigator.clipboard needs a secure context (HTTPS or localhost); fall back
+    // to a hidden textarea so Copy still works on a plain-HTTP LAN deployment.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+  }
+  const b = document.getElementById(btnId);
+  if (!b) return;
+  if (!b.dataset.label) b.dataset.label = b.textContent;
+  b.textContent = ok ? 'Copied' : 'Copy failed';
+  setTimeout(() => { b.textContent = b.dataset.label; }, 1500);
 }
 
 async function editLimits(id){
@@ -546,12 +773,32 @@ async function editLimits(id){
   const m = mode.trim().toLowerCase();
   if (m === 'soft' || m === 'hard') body.over_limit_mode = m;
   const r = await apiFetch(`${API}/admin/keys/${id}`, { method:'PATCH', headers: H(), body: JSON.stringify(body) });
-  if (r.ok) loadAll(); else { const e = await r.json(); alert(e.detail || 'Failed to update.'); }
+  if (r.ok) loadAll(); else { const e = await r.json(); await notice(e.detail || 'Failed to update.', 'Update failed'); }
+}
+
+async function editLlm(id){
+  const c = (window.__clients || []).find(x => x.id == id);
+  if (!c) return;
+  const base = prompt('LLM base URL for this client (blank = server default, e.g. https://openrouter.ai/api/v1):', c.llm_base_url || '');
+  if (base === null) return;
+  const model = prompt('Model id for this client (blank = server default):', c.llm_model || '');
+  if (model === null) return;
+  const keep = c.llm_key_hint
+    ? `blank keeps the saved key (…${c.llm_key_hint}), type - to remove it`
+    : 'blank = no key, e.g. for a keyless local endpoint';
+  const key = prompt(`LLM API key (${keep}):`, '');
+  if (key === null) return;
+  const body = { base_url: base.trim() || null, model: model.trim() || null };
+  const k = key.trim();
+  if (k) body.api_key = k === '-' ? '' : k;
+  const r = await apiFetch(`${API}/admin/keys/${id}/llm`, { method:'PUT', headers: H(), body: JSON.stringify(body) });
+  if (r.ok) loadAll();
+  else { const e = await r.json().catch(()=>({})); await notice(e.detail || 'Failed to update LLM settings.', 'Update failed'); }
 }
 
 document.getElementById('createBtn').addEventListener('click', async () => {
   const name = document.getElementById('newName').value.trim();
-  if (!name) { alert('Enter a client name.'); return; }
+  if (!name) { await notice('Enter a client name.', 'Missing name'); return; }
   const plan = document.getElementById('newPlan').value.trim();
   const quota = document.getElementById('newQuota').value.trim();
   const rpm = document.getElementById('newRpm').value.trim();
@@ -562,13 +809,9 @@ document.getElementById('createBtn').addEventListener('click', async () => {
   if (rpm) payload.rpm_limit = parseInt(rpm, 10);
   payload.over_limit_mode = mode;
   const r = await apiFetch(`${API}/admin/keys`, { method:'POST', headers: H(), body: JSON.stringify(payload) });
-  if (!r.ok) { const e = await r.json(); alert(e.detail || 'error'); return; }
+  if (!r.ok) { const e = await r.json(); await notice(e.detail || 'Failed to create the key.', 'Create failed'); return; }
   const d = await r.json();
-  const box = document.getElementById('adminKeyBox');
-  box.classList.remove('hidden');
-  box.innerHTML = `<strong>${esc(name)}</strong> — API key:<br><span class="mono">${d.key}</span>`
-    + `<div class="warn">⚠ Copy this key now — it is shown only once and cannot be retrieved later.</div>`
-    + ` <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${d.key}')">Copy</button>`;
+  showNewKey(name, d.key, '');
   document.getElementById('newName').value = '';
   document.getElementById('newPlan').value = '';
   document.getElementById('newQuota').value = '';
@@ -591,9 +834,17 @@ async function loadAdmins(){
       tb.appendChild(tr);
     });
     tb.querySelectorAll('[data-deadm]').forEach(b => b.addEventListener('click', async () => {
-      if (!confirm('Deactivate this admin account? Their sessions will be revoked.')) return;
+      const ok = await openModal({
+        eyebrow: 'Deactivate admin',
+        title: 'Deactivate this admin account?',
+        body: '<p>Their sessions are revoked immediately. The last active admin cannot be deactivated.</p>',
+        okText: 'Deactivate',
+        danger: true,
+      });
+      if (!ok) return;
       const r = await apiFetch(`${API}/admin/admins/${b.dataset.deadm}`, { method:'DELETE', headers: H() });
-      if (r.ok) loadAdmins(); else { const e = await r.json(); alert(e.detail || 'Failed.'); }
+      if (r.ok) loadAdmins();
+      else { const e = await r.json(); await notice(e.detail || 'Failed.', 'Deactivate failed'); }
     }));
   } catch(e){ /* leave table as-is */ }
 }
@@ -602,12 +853,12 @@ document.getElementById('addAdminBtn').addEventListener('click', async () => {
   const name = document.getElementById('admName').value.trim();
   const email = document.getElementById('admEmail').value.trim();
   const password = document.getElementById('admPw').value;
-  if (!email || password.length < 8) { alert('Email and a password of at least 8 characters are required.'); return; }
+  if (!email || password.length < 8) { await notice('Email and a password of at least 8 characters are required.', 'Check the form'); return; }
   const r = await apiFetch(`${API}/admin/admins`, { method:'POST', headers: H(), body: JSON.stringify({ name: name || email, email, password }) });
   if (r.ok) {
     document.getElementById('admName').value=''; document.getElementById('admEmail').value=''; document.getElementById('admPw').value='';
     loadAdmins();
-  } else { const e = await r.json(); alert(e.detail || 'Failed to add admin.'); }
+  } else { const e = await r.json(); await notice(e.detail || 'Failed to add admin.', 'Could not add admin'); }
 });
 
 // ------------------------------------------------------------------- Init

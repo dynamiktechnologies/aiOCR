@@ -20,4 +20,6 @@ env/
 auth.db
 auth.db-wal
 auth.db-shm
+# Master key for encrypted per-client LLM credentials (must never be committed)
+llm.key
 *.sqlite3

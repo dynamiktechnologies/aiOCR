@@ -40,6 +40,24 @@ def get_structure_pipeline():
         return None
 
 
+def _as_quad(box) -> Optional[list[list[float]]]:
+    """Normalise a box to the API's polygon form [[x1,y1],[x2,y2],[x3,y3],[x4,y4]].
+
+    PaddleX reports axis-aligned boxes as a flat [x1, y1, x2, y2] list while
+    OCR text blocks use 4 corner points; the response schema expects the latter.
+    """
+    if not box:
+        return None
+    try:
+        if len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
+            x1, y1, x2, y2 = (float(v) for v in box)
+            return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+        quad = [[float(p[0]), float(p[1])] for p in box]
+        return quad or None
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
 def detect_tables(
     image: Image.Image,
     text_blocks: list[dict],
@@ -65,40 +83,47 @@ def detect_tables(
         image.save(tmp_path.name)
         tmp_path.close()
 
-        results = pipeline.predict(tmp_path)
+        # predict() expects a path / ndarray / PIL image, not a file handle.
+        results = pipeline.predict(tmp_path.name)
         tables = []
 
         for result in results:
-            res_json = result.json
+            res_json = getattr(result, "json", None)
+            if not isinstance(res_json, dict):
+                continue
             res = res_json.get("res", res_json)
+            if not isinstance(res, dict):
+                continue
 
-            # Extract table results from the layout parsing
-            layout_results = res.get("layout_parsing_res", res.get("pruned_result", []))
-            if isinstance(layout_results, dict):
-                layout_results = [layout_results]
-
-            for item in layout_results:
-                label = item.get("label", "")
-                if label != "table":
+            # PP-StructureV3 reports document blocks under 'parsing_res_list';
+            # a table block carries its predicted HTML in 'block_content'.
+            page_tables = []
+            blocks = res.get("parsing_res_list") or []
+            for item in blocks:
+                if not isinstance(item, dict):
                     continue
-
-                table_res = item.get("table_res", {})
-                if not table_res:
+                if str(item.get("block_label", "")).lower() != "table":
                     continue
-
-                pred_html = table_res.get("pred_html", "")
-                cell_bboxes = table_res.get("cell_bboxes", [])
-
-                cells = []
-                # Parse HTML table to extract cells
-                if pred_html:
-                    cells = _parse_html_table(pred_html, cell_bboxes)
-
+                cells = _parse_html_table(item.get("block_content") or "")
                 if cells:
-                    tables.append({
+                    page_tables.append({
                         "cells": cells,
-                        "bbox": item.get("bbox", None),
+                        "bbox": _as_quad(item.get("block_bbox")),
                     })
+
+            # Fallback: the raw table-recognition results (older/newer layouts).
+            if not page_tables:
+                for table_res in res.get("table_res_list") or []:
+                    if not isinstance(table_res, dict):
+                        continue
+                    cells = _parse_html_table(
+                        table_res.get("pred_html") or "",
+                        table_res.get("cell_box_list") or table_res.get("cell_bboxes"),
+                    )
+                    if cells:
+                        page_tables.append({"cells": cells, "bbox": None})
+
+            tables.extend(page_tables)
 
         return tables
 
@@ -124,13 +149,14 @@ def _parse_html_table(html: str, cell_bboxes: list = None) -> list[dict]:
         return []
 
     cells = []
+    cell_idx = 0
     for row_idx, tr in enumerate(table.find_all("tr")):
         for col_idx, td in enumerate(tr.find_all(["td", "th"])):
             text = td.get_text(strip=True)
             bbox = None
-            cell_idx = row_idx * len(tr.find_all(["td", "th"])) + col_idx
             if cell_bboxes and cell_idx < len(cell_bboxes):
-                bbox = cell_bboxes[cell_idx]
+                bbox = _as_quad(cell_bboxes[cell_idx])
+            cell_idx += 1
 
             cells.append({
                 "row": row_idx,

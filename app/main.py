@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Depends, Response
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Depends, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -31,6 +31,7 @@ from .auth import (
     record_usage,
     record_ocr_run,
     enforce_limits,
+    get_llm_override,
 )
 from .schemas import (
     OCRResponse, HealthResponse, TextBlock, Table, TableCell, PageResult,
@@ -42,6 +43,18 @@ logger = logging.getLogger(__name__)
 
 # Max accepted upload size (bytes). Default 10 MB, override via env.
 MAX_UPLOAD_BYTES = int(os.getenv("OCR_MAX_UPLOAD_BYTES", 10 * 1024 * 1024))
+# Hard ceiling on PDF pages per request: each page is rendered at 200 dpi and
+# held in memory, so an unbounded max_pages would let one caller exhaust RAM.
+MAX_PDF_PAGES = int(os.getenv("OCR_MAX_PDF_PAGES", 100))
+
+
+def _clamp_pages(max_pages: int) -> int:
+    """Keep the requested page count within [1, MAX_PDF_PAGES]."""
+    try:
+        value = int(max_pages)
+    except (TypeError, ValueError):
+        value = 20
+    return max(1, min(value, MAX_PDF_PAGES))
 
 
 def _chunk_size_str() -> str:
@@ -102,12 +115,34 @@ app = FastAPI(
                 "All /ocr endpoints require a per-client API key (X-API-Key header).",
     version="1.1.0",
     lifespan=lifespan,
+    # Swagger's stock page is a standalone light-only sheet; /docs below serves a
+    # themed one that follows the portal's light/dark switch.
+    docs_url=None,
 )
 
 # Serve the frontend
 static_dir = Path(__file__).resolve().parent.parent / "static"
 if static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@app.middleware("http")
+async def _revalidate_frontend(request: Request, call_next):
+    """Make the portal shell and its assets revalidate on every load.
+
+    FileResponse sends no Cache-Control, so browsers fall back to heuristic
+    caching: an edited theme.css can keep being reused until it is considered
+    stale, and a light/dark toggle then flips data-theme with no visible effect
+    because the cached sheet has no light palette. no-cache keeps the ETag /
+    Last-Modified round-trip (304s), so this stays cheap.
+    """
+    response = await call_next(request)
+    if request.method == "GET":
+        path = request.url.path
+        if path in ("/", "/demo", "/docs") or path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
 
 # Admin key-management endpoints (require an admin login session)
 app.include_router(auth_router)
@@ -139,6 +174,12 @@ async def admin_portal():
 async def demo_page():
     """Standalone demo: OCR passport / identity-card details into a filled form."""
     return FileResponse(static_dir / "demo.html")
+
+
+@app.get("/docs", include_in_schema=False)
+async def api_docs():
+    """Swagger UI wearing the portal palette (honours the light/dark switch)."""
+    return FileResponse(static_dir / "api-docs.html")
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
@@ -181,6 +222,7 @@ async def _process_ocr_upload(
 ) -> tuple[str, list]:
     """Read + OCR one uploaded file into (doc_type, pages_raw), page numbers 1-based."""
     contents = await _read_upload_limited(upload, MAX_UPLOAD_BYTES)
+    max_pages = _clamp_pages(max_pages)
     doc_type = detect_document_type(contents, upload.filename or "")
     if doc_type == "unsupported":
         raise HTTPException(
@@ -297,12 +339,23 @@ async def ocr_endpoint(
         tables=[_build_table(t) for t in tables_all],
     )
 
-    # Document parsing
+    # Document parsing: an admin-configured per-client LLM key/endpoint wins,
+    # otherwise parse_document falls back to the server-wide OCR_LLM_* settings.
     if parse_doc:
         try:
-            parsed = parse_document(full_text, fields=_parse_fields(fields))
-            if parsed:
+            parsed = parse_document(
+                full_text,
+                fields=_parse_fields(fields),
+                **(get_llm_override(client.id) or {}),
+            )
+            # The LLM may answer with a JSON array (or a bare scalar); the
+            # response model requires a field->value object, so normalise.
+            if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+                parsed = parsed[0]
+            if isinstance(parsed, dict) and parsed:
                 response.document = parsed
+            elif parsed:
+                logger.warning("Ignoring LLM output: expected a JSON object, got %s", type(parsed).__name__)
         except Exception as e:
             logger.error(f"Document parsing failed: {e}")
 
@@ -353,6 +406,7 @@ def _build_table(table_raw: dict) -> Table:
 async def ocr_text_only(
     file: UploadFile = File(..., description="Image or document file (PNG, JPG, PDF, DOCX, XLSX, ...)"),
     lang: str = Form(default="en", description="Language code"),
+    max_pages: int = Form(default=20, description="Max PDF pages to process"),
     client: APIKeyInfo = Depends(resolve_client),
     response: Response = None,
 ):
@@ -363,6 +417,7 @@ async def ocr_text_only(
     """
     _apply_limit_headers(response, enforce_limits(client))
     contents = await _read_upload_limited(file, MAX_UPLOAD_BYTES)
+    max_pages = _clamp_pages(max_pages)
     logger.info("OCR(text) request by client id=%s name=%r (%d bytes)", client.id, client.name, len(contents))
     doc_type = detect_document_type(contents, file.filename or "")
 
@@ -372,22 +427,36 @@ async def ocr_text_only(
             detail="Unsupported file type. Accepted: PNG, JPG, TIFF, BMP, WEBP, PDF, DOCX, XLSX",
         )
 
+    pages = 0
+    text = ""
     try:
         if doc_type == "image":
             image = Image.open(io.BytesIO(contents)).convert("RGB")
             text = extract_full_text(image, lang=lang)
+            pages = 1
         elif doc_type == "pdf":
             parts = []
-            for i, page_img in enumerate(pdf_pages_to_images(contents), start=1):
+            for i, page_img in enumerate(pdf_pages_to_images(contents, max_pages=max_pages), start=1):
                 parts.append(f"--- Page {i} ---\n{extract_full_text(page_img, lang=lang)}")
             text = "\n\n".join(parts)
+            pages = len(parts)
         else:
             blocks, _ = load_docx(contents) if doc_type == "docx" else load_xlsx(contents)
             text = "\n".join(b["text"] for b in blocks)
+            pages = 1
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Text extraction failed: {e}")
 
     record_usage(client.id)
+    record_ocr_run(
+        client.id,
+        filename=file.filename or None,
+        document_type=doc_type,
+        lang=lang,
+        text_blocks=len([ln for ln in text.splitlines() if ln.strip()]),
+        pages=pages,
+        chars=len(text),
+    )
     return {"text": text, "language": lang, "document_type": doc_type}

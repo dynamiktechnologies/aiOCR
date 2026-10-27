@@ -120,13 +120,28 @@ def parse_document(
     Returns:
         Parsed dict of structured fields, or None if LLM not configured.
     """
-    key = api_key or os.getenv("OCR_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    # A caller-supplied base_url means "use this endpoint with these credentials".
+    # Never fall back to the server-wide key for it, or an admin-configured
+    # client endpoint would receive the server's own LLM secret.
+    explicit_base = base_url is not None
+    if api_key is not None:
+        key = api_key
+    elif explicit_base:
+        key = None
+    else:
+        key = os.getenv("OCR_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     url = base_url or os.getenv("OCR_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     if not key:
         if url and _keyless_allowed(url):
             # Local OpenAI-compatible servers ignore the key; the SDK still
             # requires a non-empty string, so send a harmless placeholder.
             key = "not-needed"
+        elif explicit_base:
+            logger.warning(
+                "No LLM API key is set for this client's LLM endpoint (%s) and it is "
+                "not a local/keyless host. Skipping document parsing.", url,
+            )
+            return None
         else:
             logger.warning(
                 "No LLM API key configured and no local/keyless endpoint detected "
@@ -162,6 +177,13 @@ def parse_document(
         from openai import OpenAI
 
         client_kwargs = {"api_key": key}
+        # Bound the call: an unresponsive endpoint (including an admin-configured
+        # per-client one) would otherwise hold the single OCR worker indefinitely.
+        try:
+            client_kwargs["timeout"] = float(os.getenv("OCR_LLM_TIMEOUT") or "60")
+        except (TypeError, ValueError):
+            client_kwargs["timeout"] = 60.0
+        client_kwargs["max_retries"] = 1
         if url:
             client_kwargs["base_url"] = url
             # OpenRouter recommends optional attribution headers.

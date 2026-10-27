@@ -7,11 +7,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/theme.css">
+<script src="/static/theme.js?v=3"></script>
+<script>if (location.search.indexOf('embed=1') !== -1) document.documentElement.classList.add('embed');</script>
+<link rel="stylesheet" href="/static/theme.css?v=3">
 <style>
   .demo-head { text-align: center; margin: 10px 0 26px; }
   .demo-head h1 { font-size: 1.8rem; font-weight: 800; }
-  .demo-head h1 span { color: var(--accent); text-shadow: 0 0 22px hsl(356 88% 58% / .55); }
+  .demo-head h1 span { color: var(--accent); text-shadow: 0 0 22px hsl(var(--primary-h) / .45); }
   .demo-head .sub { color: var(--muted); margin-top: 8px; font-size: .92rem; }
 
   /* Document preview styled like an ID / passport */
@@ -50,6 +52,11 @@
   .doccard.ok { outline: 2px solid hsl(var(--success-h) / .5); outline-offset: 2px; }
   .doccard.warn { outline: 2px solid hsl(var(--warning-h) / .5); outline-offset: 2px; }
   .doccard.error { outline: 2px solid hsl(var(--danger-h) / .6); outline-offset: 2px; box-shadow: 0 0 26px -4px hsl(var(--danger-h) / .55); }
+
+  /* Opened inside the portal's "Sample use case" tab (?embed=1): the host page
+     already provides the nav and a heading, so drop both and tighten up. */
+  html.embed nav, html.embed .demo-head { display: none; }
+  html.embed .wrap { padding-top: 6px; padding-bottom: 18px; }
 </style>
 </head>
 <body>
@@ -58,6 +65,7 @@
     <div class="links">
       <a href="/">Portal</a>
       <a href="/docs">API Docs</a>
+      <button class="theme-toggle" id="themeBtn" type="button">Light mode</button>
     </div>
   </nav>
 
@@ -442,6 +450,21 @@ document.getElementById('copyBtn').addEventListener('click', () => {
 document.getElementById('lang').innerHTML = LANGS.map(l => `<option value="${l}"${l==='en'?' selected':''}>${l}</option>`).join('');
 applyPreset();
 render();
+</script>
+<script>
+/* Embedded in the portal's "Sample use case" tab: report the content height so
+   the host can size the frame to it instead of showing a nested scrollbar. */
+(function () {
+  if (!document.documentElement.classList.contains('embed') || window.parent === window) return;
+  var last = 0;
+  function send() {
+    var h = Math.ceil(document.documentElement.scrollHeight);
+    if (h > 0 && h !== last) { last = h; parent.postMessage({ ocrDemoHeight: h }, location.origin); }
+  }
+  if (window.ResizeObserver) new ResizeObserver(send).observe(document.documentElement);
+  window.addEventListener('load', send);
+  send();
+})();
 </script>
 </body>
 </html>

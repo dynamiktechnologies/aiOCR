@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI OCR — API docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="/static/theme.js?v=3"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+<link rel="stylesheet" href="/static/theme.css?v=3">
+<style>
+  /* Swagger UI wears the portal palette: every rule below reads a token, so the
+     page follows the light/dark switch instead of shipping two stylesheets. */
+  .docwrap { max-width: 1180px; margin: 0 auto; padding: 8px 24px 40px; }
+  .swagger-ui { font-family: var(--font-sans); color: var(--text); }
+  .swagger-ui .info .title,
+  .swagger-ui .info .title small,
+  .swagger-ui .info .base-url,
+  .swagger-ui .opblock-tag,
+  .swagger-ui .opblock .opblock-summary-path,
+  .swagger-ui .opblock .opblock-summary-path__deprecated,
+  .swagger-ui .model-title,
+  .swagger-ui .parameter__name,
+  .swagger-ui .parameter__type,
+  .swagger-ui .response-col_status,
+  .swagger-ui .response-col_description,
+  .swagger-ui .responses-inner h4,
+  .swagger-ui .responses-inner h5,
+  .swagger-ui .tab li button,
+  .swagger-ui label,
+  .swagger-ui table thead tr th,
+  .swagger-ui table thead tr td,
+  .swagger-ui h1, .swagger-ui h2, .swagger-ui h3, .swagger-ui h4, .swagger-ui h5 {
+    color: var(--text) !important;
+  }
+  .swagger-ui .info p,
+  .swagger-ui .info li,
+  .swagger-ui .info a,
+  .swagger-ui .markdown p,
+  .swagger-ui .markdown li,
+  .swagger-ui .opblock-summary-description,
+  .swagger-ui .parameter__in,
+  .swagger-ui .opblock-description-wrapper p,
+  .swagger-ui .model,
+  .swagger-ui .model-box,
+  .swagger-ui .property-row,
+  .swagger-ui .model .property {
+    color: var(--muted) !important;
+  }
+  .swagger-ui .info .title small { background: hsl(var(--muted-h)); color: var(--muted); }
+  .swagger-ui .info .title small.version-stamp { background: hsl(var(--primary-h) / .16); color: var(--accent); }
+  .swagger-ui .info .title small pre { color: var(--accent); }
+  .swagger-ui .scheme-container { background: transparent; box-shadow: none; padding: 0 0 18px; }
+  .swagger-ui .opblock-tag { border-bottom-color: var(--border); }
+  .swagger-ui .opblock-tag:hover { background: hsl(var(--primary-h) / .05); }
+  .swagger-ui .opblock { background: hsl(var(--muted-h) / .35); border-color: var(--border); box-shadow: none; }
+  .swagger-ui .opblock .opblock-summary { border-bottom-color: var(--border); }
+  /* Opaque body: without this the page grid runs straight through the
+     parameter and response tables. */
+  .swagger-ui .opblock-body { background: var(--surface); }
+  /* The UA focus ring is 3px in currentColor — glare on white, invisible on
+     the dark palette. Replace it with the brand ring. */
+  .swagger-ui .opblock-summary-control:focus,
+  .swagger-ui .opblock-summary-control:focus-visible {
+    outline: 2px solid hsl(var(--primary-h) / .8); outline-offset: -2px; border-radius: 4px;
+  }
+  .swagger-ui .opblock-summary-method { text-shadow: none; }
+  .swagger-ui .opblock-patch .opblock-summary-method { background: hsl(168 72% 30%); }
+  .swagger-ui .response-col_links,
+  .swagger-ui .response-control-media-type__accept-message { color: var(--muted) !important; }
+  .swagger-ui .tab li.active { box-shadow: inset 0 -2px 0 hsl(var(--primary-h) / .9); }
+  .swagger-ui .opblock .opblock-summary-description { font-size: .84rem; }
+  .swagger-ui .opblock .opblock-section-header { background: hsl(var(--muted-h) / .7); box-shadow: none; }
+  .swagger-ui .opblock .opblock-section-header h4,
+  .swagger-ui .opblock .opblock-section-header > label { color: var(--text); }
+  .swagger-ui .opblock-body pre.microlight,
+  .swagger-ui .highlight-code > .microlight {
+    background: hsl(var(--background-h)) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .swagger-ui table thead tr td,
+  .swagger-ui table thead tr th { border-bottom-color: var(--border); }
+  .swagger-ui .model-container,
+  .swagger-ui section.models .model-container { background: hsl(var(--muted-h) / .45); }
+  .swagger-ui .model-box { background: transparent; }
+  .swagger-ui section.models { border-color: var(--border); background: hsl(var(--muted-h) / .25); }
+  .swagger-ui section.models .model-container:hover { background: hsl(var(--muted-h) / .7); }
+  /* Since 5.18 the Schemas section renders with the JSON-Schema-2020-12 widget,
+     whose chips are hardcoded grey with a #505050 title, #6b6b6b keywords and a
+     #5555aa type — unreadable on the dark palette. Re-point it at the tokens. */
+  .swagger-ui .json-schema-2020-12 { background: transparent; color: var(--text); }
+  .swagger-ui .json-schema-2020-12-accordion,
+  .swagger-ui .json-schema-2020-12-accordion__children { color: var(--text); }
+  .swagger-ui .json-schema-2020-12-accordion {
+    background: hsl(var(--muted-h) / .55); border-radius: 6px;
+    padding: 2px 8px 2px 6px; margin-right: 6px;
+  }
+  .swagger-ui .json-schema-2020-12-accordion:hover { background: hsl(var(--muted-h) / .9); }
+  .swagger-ui .json-schema-2020-12-accordion__icon,
+  .swagger-ui .json-schema-2020-12-accordion__icon--expanded,
+  .swagger-ui .json-schema-2020-12-accordion__icon--collapsed { color: var(--muted); }
+  /* Nested schemas ship a #3b4151 title via a deeper selector, hence !important. */
+  .swagger-ui .json-schema-2020-12__title { color: var(--text) !important; }
+  .swagger-ui .json-schema-2020-12-expand-deep-button {
+    background: transparent; color: var(--muted); padding: 0 2px;
+  }
+  .swagger-ui .json-schema-2020-12-expand-deep-button:hover { color: var(--accent); }
+  .swagger-ui .json-schema-2020-12__attribute { color: var(--success); }
+  .swagger-ui .json-schema-2020-12-keyword,
+  .swagger-ui .json-schema-2020-12-keyword--description,
+  .swagger-ui .json-schema-2020-12-core-keyword__value { color: var(--muted); }
+  .swagger-ui .json-schema-2020-12__constraint {
+    background: hsl(var(--warning-h) / .18); color: var(--warning);
+    border: 1px solid hsl(var(--warning-h) / .45); border-radius: 4px;
+  }
+  .swagger-ui .json-schema-2020-12-accordion:focus-visible,
+  .swagger-ui .json-schema-2020-12-expand-deep-button:focus-visible {
+    outline: 2px solid hsl(var(--primary-h) / .8); outline-offset: 1px;
+  }
+  .swagger-ui select,
+  .swagger-ui input[type=text],
+  .swagger-ui input[type=password],
+  .swagger-ui input[type=email],
+  .swagger-ui input[type=number],
+  .swagger-ui textarea {
+    background: hsl(var(--muted-h) / .5); color: var(--text); border-color: var(--border);
+  }
+  .swagger-ui select option { background: var(--surface); color: var(--text); }
+  .swagger-ui .btn { border-color: var(--border); color: var(--text); }
+  .swagger-ui .btn.authorize { color: var(--success); border-color: hsl(var(--success-h) / .5); }
+  .swagger-ui .btn.authorize svg { fill: var(--success); }
+  .swagger-ui .btn.execute { background: var(--accent); border-color: var(--accent); color: hsl(var(--background-h)); }
+  .swagger-ui .btn.execute:hover { filter: brightness(1.1); }
+  .swagger-ui .btn.cancel { color: var(--danger); border-color: hsl(var(--danger-h) / .5); }
+  .swagger-ui .dialog-ux .modal-ux { background: var(--surface); border-color: var(--border); }
+  .swagger-ui .dialog-ux .modal-ux-header h3, .swagger-ui .dialog-ux .modal-ux-content h4,
+  .swagger-ui .dialog-ux .modal-ux-content p, .swagger-ui .dialog-ux .modal-ux-content label { color: var(--text); }
+  .swagger-ui .dialog-ux .backdrop-ux { background: var(--scrim); }
+  /* Glyphs (lock, chevron) are <use> symbols painted with currentColor, and
+     Swagger pins the summary button color to slate — so set the fill here. */
+  .swagger-ui svg { fill: currentColor; }
+  .swagger-ui .opblock-summary svg { fill: hsl(var(--muted-fg-h)) !important; }
+  /* Swagger dims the row glyphs to 40%, which reads as "missing" on the dark
+     palette; keep them secondary but visible. */
+  .swagger-ui .opblock-summary .authorization__btn svg,
+  .swagger-ui .opblock-summary .expand-operation svg { opacity: .75; }
+  .swagger-ui .copy-to-clipboard { background: hsl(var(--muted-h) / .6); }
+  .swagger-ui .copy-to-clipboard button { background: transparent; }
+  .swagger-ui .filter .operation-filter-input { border-color: var(--border); }
+  .swagger-ui .errors-wrapper { background: hsl(var(--danger-h) / .1); border-color: var(--danger); }
+  .swagger-ui .errors-wrapper .errors h4, .swagger-ui .errors-wrapper .errors small { color: var(--text); }
+</style>
+</head>
+<body>
+  <nav>
+    <div class="brand"><span>AI OCR</span> · API docs</div>
+    <div class="links">
+      <a href="/">Portal</a>
+      <a href="/demo">Demo</a>
+      <a href="/openapi.json">openapi.json</a>
+      <button class="theme-toggle" id="themeBtn" type="button">Light mode</button>
+    </div>
+  </nav>
+
+  <div class="docwrap"><div id="swagger-ui"></div></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js" crossorigin></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: '/openapi.json',
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      showExtensions: false,
+      showCommonExtensions: false,
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      layout: 'BaseLayout',
+      syntaxHighlight: { activated: true, theme: 'agate' },
+    });
+  </script>
+</body>
+</html>

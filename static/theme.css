@@ -44,8 +44,42 @@
   --glow: 0 0 24px -4px hsl(var(--primary-h) / 0.5);
   --glow-lg: 0 0 48px -10px hsl(var(--primary-h) / 0.5);
 
+  /* Dialog scrim + drop shadow (re-tuned for the light palette below) */
+  --scrim: hsl(var(--background-h) / 0.72);
+  --overlay-shadow: 0 30px 70px -30px hsl(0 0% 0% / 0.85);
+
+  color-scheme: dark;
+
   --font-sans: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", SFMono-Regular, monospace;
+}
+
+/* Light palette. Same token names, so every component flips with it; set by
+   /static/theme.js as data-theme="light" on <html>. Values are picked for
+   contrast on white, not just lightened versions of the dark set. */
+:root[data-theme="light"] {
+  --background-h: 220 24% 97%;
+  --foreground-h: 228 26% 12%;
+  --card-h: 0 0% 100%;
+  --border-h: 224 18% 86%;
+  --muted-h: 222 22% 94%;
+  --muted-fg-h: 224 10% 40%;
+  --primary-h: 356 76% 48%;
+  --secondary-h: 300 60% 50%;
+  --success-h: 152 62% 32%;
+  --warning-h: 33 90% 36%;
+  --danger-h: 350 76% 46%;
+  --grid-line-h: 224 18% 91%;
+
+  --glass-bg: hsl(var(--card-h) / 0.82);
+  --glass-border: hsl(var(--border-h) / 0.9);
+  --glow-sm: 0 1px 2px hsl(228 26% 16% / 0.10);
+  --glow: 0 10px 26px -14px hsl(228 26% 16% / 0.30);
+  --glow-lg: 0 24px 60px -30px hsl(228 26% 16% / 0.35);
+  --scrim: hsl(228 26% 16% / 0.38);
+  --overlay-shadow: 0 24px 60px -28px hsl(228 26% 16% / 0.35);
+
+  color-scheme: light;
 }
 
 body {
@@ -90,6 +124,14 @@ nav .links a {
 }
 nav .links a:hover, nav .links a.active { color: var(--text); }
 nav .links a.active { color: var(--accent); }
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: 18px;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 99px; padding: 5px 12px; font-family: var(--font-mono);
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
+  cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+}
+.theme-toggle:hover { color: var(--text); border-color: hsl(var(--primary-h) / .6); background: hsl(var(--primary-h) / .06); }
 
 /* -------------------------------------------------------------- Layout ---- */
 .wrap { max-width: 1150px; margin: 0 auto; padding: 28px 24px; display: grid; gap: 20px; }
